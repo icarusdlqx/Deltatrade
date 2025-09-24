@@ -1,0 +1,126 @@
+:root {
+  --sidebar-width: 240px;
+  --brand-color: #0d6efd;
+  --bg-surface: #f8f9fb;
+  --text-muted: #6c757d;
+}
+
+body {
+  font-family: "Inter", "Segoe UI", sans-serif;
+  background: var(--bg-surface);
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--bg-surface);
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  background: #111927;
+  color: #fff;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.sidebar .brand .logo {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #66d9ff;
+  margin-right: 0.5rem;
+}
+
+.sidebar .brand .brand-name {
+  font-size: 1.15rem;
+  color: #f8f9fa;
+  font-weight: 600;
+}
+
+.sidebar .nav-link {
+  color: rgba(255, 255, 255, 0.7);
+  padding: 0.75rem 1.5rem;
+  border-radius: 0;
+}
+
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+  background: rgba(13, 110, 253, 0.2);
+  color: #fff;
+}
+
+.sidebar-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.topbar {
+  background: #fff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.content-wrapper {
+  background: transparent;
+}
+
+.card-surface {
+  background: #fff;
+  border-radius: 1rem;
+  border: 1px solid rgba(17, 25, 39, 0.08);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+.metric-value {
+  font-size: 1.75rem;
+  font-weight: 600;
+}
+
+.metric-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.table-modern {
+  --bs-table-bg: transparent;
+  --bs-table-striped-bg: rgba(13, 110, 253, 0.05);
+  --bs-table-striped-color: inherit;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: rgba(13, 110, 253, 0.1);
+  color: #0d6efd;
+}
+
+.status-pill.negative {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+}
+
+.status-pill.neutral {
+  background: rgba(108, 117, 125, 0.15);
+  color: #6c757d;
+}
+
+.positions-table td,
+.positions-table th {
+  vertical-align: middle;
+}
+
+.env-pill .badge {
+  font-weight: 600;
+}
+
+@media (max-width: 767.98px) {
+  .app-shell {
+    flex-direction: column;
+  }
+  .content-wrapper {
+    padding: 1.5rem 1.25rem;
+  }
+}
