@@ -1,64 +1,177 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Deltatrade V1 · Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 20px; }
-    h1 { margin: 0 0 6px 0; }
-    .note { color: #555; font-size: 0.95em; }
-    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-    th, td { border-bottom: 1px solid #eaeaea; padding: 8px; text-align: left; }
-    .pill { display:inline-block; padding:2px 8px; border-radius: 12px; background:#f3f4f6; margin-left:6px; font-size:0.85em;}
-    .btn { display:inline-block; padding:8px 12px; background:#111827; color:#fff; border-radius:8px; text-decoration:none; }
-    .row { display:flex; gap:16px; flex-wrap:wrap; }
-    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; flex:1; min-width:260px;}
-    pre { background:#0b1020; color:#c7d2fe; padding:12px; border-radius:8px; overflow:auto; }
-  </style>
-</head>
-<body>
-  <h1>Deltatrade V1 <span class="pill">Autonomous</span></h1>
-  <div class="note">Windows (ET): {{ ', '.join(cfg.TRADING_WINDOWS_ET) }} · Tol ±{{ cfg.WINDOW_TOL_MIN }} min · Avoid near close {{ cfg.AVOID_NEAR_CLOSE_MIN }} min</div>
+{% extends "base.html" %}
 
-  <div class="row" style="margin-top:16px;">
-    <div class="card">
-      <h3>Controls</h3>
-      <form method="post" action="{{ url_for('run_now') }}">
-        <button class="btn" type="submit">Run now</button>
-      </form>
-      <p class="note">Automation: <b>{{ 'ON' if cfg.AUTOMATION_ENABLED else 'OFF' }}</b> · DRY_RUN: <b>{{ 'ON' if cfg.DRY_RUN else 'OFF' }}</b></p>
-      <p><a class="btn" href="{{ url_for('settings') }}">Settings</a></p>
+{% block title %}Dashboard · Deltatrade{% endblock %}
+{% block header_title %}Trading Dashboard{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Total runs</div>
+      <div class="metric-value">{{ metrics.total_runs }}</div>
     </div>
-    <div class="card">
-      <h3>Health</h3>
-      <p>OpenAI key: <b>{{ 'yes' if health.openai_present else 'no' }}</b></p>
-      <p>Alpaca (paper): <b>{{ health.alpaca_paper }}</b></p>
-      <p>As of: {{ health.as_of }}</p>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Proceed rate</div>
+      <div class="metric-value">{{ metrics.proceed_rate }}%</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Avg expected α</div>
+      <div class="metric-value">{{ metrics.avg_expected }} bps</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Net projected edge</div>
+      <div class="metric-value">{{ metrics.net_edge }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xl-8">
+    <div class="card card-surface p-4 mb-4">
+      {% if latest %}
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+        <div>
+          <h5 class="mb-1">Latest episode</h5>
+          <div class="text-muted small">{{ latest.as_of }}</div>
+        </div>
+        <form method="post" action="{{ url_for('run_now') }}">
+          <button type="submit" class="btn btn-primary">Trigger run</button>
+        </form>
+      </div>
+      <hr>
+      <div class="row g-3">
+        <div class="col-sm-6 col-lg-3">
+          <div class="metric-label">Expected α</div>
+          <div class="metric-value text-primary">{{ '%.2f'|format(latest.expected_alpha_bps|default(0)) }} bps</div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="metric-label">Est. costs</div>
+          <div class="metric-value text-danger">{{ '%.2f'|format(latest.est_cost_bps|default(0)) }} bps</div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="metric-label">Investable</div>
+          <div class="metric-value">${{ '%.0f'|format(latest.investable|default(0)) }}</div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <div class="metric-label">Orders</div>
+          <div class="metric-value">{{ latest.orders_submitted|length }}</div>
+        </div>
+      </div>
+      <div class="mt-4">
+        <h6 class="fw-semibold mb-2">Focus list</h6>
+        {% if latest.top_symbols %}
+        <div class="d-flex flex-wrap gap-2">
+          {% for sym in latest.top_symbols %}
+          <span class="status-pill">{{ sym }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted small">No top symbols recorded for this run.</div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="text-center py-4">
+        <p class="text-muted mb-3">No trading episodes recorded yet.</p>
+        <form method="post" action="{{ url_for('run_now') }}">
+          <button type="submit" class="btn btn-primary">Run the trading engine</button>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card card-surface p-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="fw-semibold mb-0">Recent episodes</h6>
+        <a class="text-decoration-none" href="{{ url_for('log') }}">View log →</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-modern table-striped align-middle mb-0">
+          <thead class="text-uppercase small text-muted">
+            <tr>
+              <th>As of</th>
+              <th class="text-center">Proceed</th>
+              <th class="text-end">Expected α (bps)</th>
+              <th class="text-end">Costs (bps)</th>
+              <th>Orders</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ep in episodes %}
+            <tr>
+              <td>{{ ep.as_of }}</td>
+              <td class="text-center">
+                {% if ep.proceed %}
+                <span class="status-pill"><i class="bi bi-check-circle"></i>Yes</span>
+                {% else %}
+                <span class="status-pill negative"><i class="bi bi-x-circle"></i>No</span>
+                {% endif %}
+              </td>
+              <td class="text-end">{{ '%.2f'|format(ep.expected_alpha_bps|default(0)) }}</td>
+              <td class="text-end">{{ '%.2f'|format(ep.est_cost_bps|default(0)) }}</td>
+              <td>
+                {% if ep.orders_submitted %}
+                  {{ ep.orders_submitted|length }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="5" class="text-center text-muted">No recent activity.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-  <h2 style="margin-top:24px;">Recent episodes</h2>
-  {% if episodes %}
-  <table>
-    <thead>
-      <tr><th>As of (UTC)</th><th>Proceed</th><th>Exp α (bps)</th><th>Cost (bps)</th><th>Top symbols</th><th>Orders</th></tr>
-    </thead>
-    <tbody>
-      {% for e in episodes %}
-        <tr>
-          <td>{{ e.as_of }}</td>
-          <td>{{ e.proceed }}</td>
-          <td>{{ '%.1f'|format(e.expected_alpha_bps) if e.expected_alpha_bps is not none else '' }}</td>
-          <td>{{ '%.1f'|format(e.est_cost_bps) if e.est_cost_bps is not none else '' }}</td>
-          <td>{{ ', '.join(e.top_symbols or []) }}</td>
-          <td>{{ (e.orders_submitted|length) if e.orders_submitted else 0 }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="note">No episodes yet. Click “Run now” or wait for the next window.</p>
-  {% endif %}
-</body>
-</html>
+  <div class="col-12 col-xl-4">
+    <div class="card card-surface p-4 mb-4">
+      <h6 class="fw-semibold">System health</h6>
+      <ul class="list-unstyled mt-3 mb-0">
+        <li class="d-flex justify-content-between py-2 border-bottom">
+          <span>Alpaca API</span>
+          <span class="status-pill {{ 'negative' if not env.alpaca_key else '' }}">{{ 'Connected' if env.alpaca_key else 'Missing' }}</span>
+        </li>
+        <li class="d-flex justify-content-between py-2 border-bottom">
+          <span>Alpaca Secret</span>
+          <span class="status-pill {{ 'negative' if not env.alpaca_secret else '' }}">{{ 'Loaded' if env.alpaca_secret else 'Missing' }}</span>
+        </li>
+        <li class="d-flex justify-content-between py-2 border-bottom">
+          <span>OpenAI key</span>
+          <span class="status-pill {{ 'negative' if not env.openai_key else '' }}">{{ 'Available' if env.openai_key else 'Missing' }}</span>
+        </li>
+        <li class="d-flex justify-content-between py-2">
+          <span>Mode</span>
+          <span class="status-pill {{ 'neutral' if env.simulated else '' }}">{{ env.mode_label }}</span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="card card-surface p-4">
+      <h6 class="fw-semibold">Configuration snapshot</h6>
+      <dl class="row mb-0 small mt-3">
+        <dt class="col-6 text-muted">Automation</dt>
+        <dd class="col-6">{{ 'On' if cfg.AUTOMATION_ENABLED else 'Off' }}</dd>
+        <dt class="col-6 text-muted">Universe</dt>
+        <dd class="col-6 text-truncate">{{ cfg.UNIVERSE_MODE }}</dd>
+        <dt class="col-6 text-muted">Target positions</dt>
+        <dd class="col-6">{{ cfg.TARGET_POSITIONS }}</dd>
+        <dt class="col-6 text-muted">Cost gate</dt>
+        <dd class="col-6">{{ 'Enabled' if cfg.ENABLE_COST_GATE else 'Disabled' }}</dd>
+        <dt class="col-6 text-muted">Vol targeting</dt>
+        <dd class="col-6">{{ 'Enabled' if cfg.ENABLE_VOL_TARGETING else 'Disabled' }}</dd>
+      </dl>
+      <a class="btn btn-outline-secondary w-100 mt-3" href="{{ url_for('settings') }}">Adjust settings</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

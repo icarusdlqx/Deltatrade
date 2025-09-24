@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Performance · Deltatrade{% endblock %}
+{% block header_title %}Performance analytics{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Total runs</div>
+      <div class="metric-value">{{ metrics.total_runs }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Proceed rate</div>
+      <div class="metric-value">{{ metrics.proceed_rate }}%</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Avg expected α</div>
+      <div class="metric-value">{{ metrics.avg_expected }} bps</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card card-surface p-3 h-100">
+      <div class="metric-label">Cumulative edge</div>
+      <div class="metric-value">{{ metrics.net_edge }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card card-surface p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="fw-semibold mb-0">Alpha vs. cost</h5>
+    <span class="text-muted small">Based on recorded episodes</span>
+  </div>
+  <canvas id="performanceChart" height="220"></canvas>
+</div>
+
+<div class="card card-surface p-4">
+  <h5 class="fw-semibold mb-3">Episode detail</h5>
+  <div class="table-responsive">
+    <table class="table table-modern table-striped align-middle mb-0">
+      <thead class="text-uppercase small text-muted">
+        <tr>
+          <th>As of</th>
+          <th class="text-end">Expected α (bps)</th>
+          <th class="text-end">Costs (bps)</th>
+          <th class="text-end">Net edge (bps)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if series.labels %}
+          {% for idx in range(series.labels|length) %}
+          {% set label = series.labels[idx] %}
+          {% set expected_val = series.expected[idx] %}
+          {% set cost_val = series.costs[idx] %}
+          {% set net = expected_val - cost_val %}
+          <tr>
+            <td>{{ label }}</td>
+            <td class="text-end">{{ '%.2f'|format(expected_val) }}</td>
+            <td class="text-end">{{ '%.2f'|format(cost_val) }}</td>
+            <td class="text-end">{{ '%.2f'|format(net) }}</td>
+          </tr>
+          {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="4" class="text-center text-muted py-4">No historical episodes available.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  const labels = {{ series.labels|tojson }};
+  const expected = {{ series.expected|tojson }};
+  const costs = {{ series.costs|tojson }};
+  const cumulative = {{ series.cumulative|tojson }};
+
+  const ctx = document.getElementById('performanceChart');
+  if (ctx && labels.length) {
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Expected α (bps)',
+            data: expected,
+            borderColor: '#0d6efd',
+            backgroundColor: 'rgba(13, 110, 253, 0.2)',
+            fill: false,
+            tension: 0.35,
+            borderWidth: 2
+          },
+          {
+            label: 'Costs (bps)',
+            data: costs,
+            borderColor: '#dc3545',
+            backgroundColor: 'rgba(220, 53, 69, 0.15)',
+            fill: false,
+            tension: 0.35,
+            borderWidth: 2
+          },
+          {
+            label: 'Cumulative net',
+            data: cumulative.map(v => v * 10000),
+            borderColor: '#198754',
+            backgroundColor: 'rgba(25, 135, 84, 0.1)',
+            fill: false,
+            tension: 0.35,
+            borderDash: [6, 6],
+            borderWidth: 2,
+            yAxisID: 'y1'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index', intersect: false },
+        stacked: false,
+        plugins: {
+          legend: { position: 'bottom' }
+        },
+        scales: {
+          y: {
+            title: { display: true, text: 'bps' },
+            grid: { color: 'rgba(15, 23, 42, 0.08)' }
+          },
+          y1: {
+            position: 'right',
+            title: { display: true, text: 'bps (cumulative)' },
+            grid: { drawOnChartArea: false }
+          }
+        }
+      }
+    });
+  }
+</script>
+{% endblock %}

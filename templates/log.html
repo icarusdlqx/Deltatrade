@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Log · Deltatrade{% endblock %}
+{% block header_title %}Execution log{% endblock %}
+
+{% block content %}
+<div class="card card-surface p-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h5 class="fw-semibold mb-1">Episodes history</h5>
+      <p class="text-muted small mb-0">Showing the {{ episodes|length }} most recent runs.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-modern table-striped align-middle">
+      <thead class="text-uppercase small text-muted">
+        <tr>
+          <th style="min-width: 180px;">As of</th>
+          <th class="text-center">Proceed</th>
+          <th class="text-end">Expected α (bps)</th>
+          <th class="text-end">Costs (bps)</th>
+          <th>Orders</th>
+          <th style="min-width: 200px;">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ep in episodes %}
+        <tr>
+          <td>{{ ep.as_of }}</td>
+          <td class="text-center">
+            {% if ep.proceed %}
+            <span class="status-pill"><i class="bi bi-check-circle"></i>Yes</span>
+            {% else %}
+            <span class="status-pill negative"><i class="bi bi-x-circle"></i>No</span>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ '%.2f'|format(ep.expected_alpha_bps|default(0)) }}</td>
+          <td class="text-end">{{ '%.2f'|format(ep.est_cost_bps|default(0)) }}</td>
+          <td>
+            {% if ep.orders_submitted %}
+              {{ ep.orders_submitted|length }} ids
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td class="text-muted small">
+            {% set risk = ep.get('risk_officer', {}) %}
+            {% if risk.message %}{{ risk.message }}{% elif risk.approved %}Risk officer: {{ risk.approved }}{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-4">No runs recorded yet.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -20,8 +20,18 @@ from .optimizer import solve_weights, scale_to_target_vol
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
 
 def _alpaca_clients():
-    api_key = os.environ["ALPACA_API_KEY"]
-    api_sec = os.environ["ALPACA_SECRET_KEY"]
+    api_key = os.environ.get("ALPACA_API_KEY")
+    api_sec = os.environ.get("ALPACA_SECRET_KEY")
+    force_sim = os.environ.get("SIM_MODE", "false").lower() in ("true", "1", "yes", "y")
+    if force_sim or not api_key or not api_sec:
+        from .simulated_clients import SimStockHistoricalDataClient, SimTradingClient
+
+        data_client = SimStockHistoricalDataClient()
+        trade_client = SimTradingClient(data_client)
+        setattr(data_client, "is_simulated", True)
+        setattr(trade_client, "is_simulated", True)
+        return data_client, trade_client, "SIMULATED", "SIMULATED"
+
     paper = os.environ.get("ALPACA_PAPER","true").lower() in ("true","1","yes","y")
     return StockHistoricalDataClient(api_key, api_sec), TradingClient(api_key, api_sec, paper=paper), api_key, api_sec
 
@@ -97,7 +107,7 @@ def run_once() -> dict:
                           winsor_pct=cfg.WINSOR_PCT).dropna(subset=["last_price"]).sort_values("score_z", ascending=False)
 
     # Event-driven alpha
-    if cfg.ENABLE_EVENT_SCORE:
+    if cfg.ENABLE_EVENT_SCORE and api_key not in (None, "SIMULATED"):
         top_syms = panel.index.tolist()[:cfg.EVENT_TOP_K]
         news_map = fetch_news_map(top_syms, cfg.NEWS_LOOKBACK_DAYS, api_key, api_sec)
         event_alpha_bps = score_events_for_symbols(news_map, C.OPENAI_MODEL, C.OPENAI_REASONING_EFFORT,
@@ -125,7 +135,7 @@ def run_once() -> dict:
     alpha_vec = alpha.reindex(candidates).fillna(0).values
 
     cur_mv_map, equity_prev, last_prices_live = _current_positions(trade_client)
-    invested_prev = sum(abs(cur_mv_map.values())) or 1.0
+    invested_prev = sum(abs(v) for v in cur_mv_map.values()) or 1.0
     w_prev = np.array([cur_mv_map.get(s, 0.0) for s in candidates], dtype=float) / invested_prev
 
     # Sector caps (optional via CSV)
@@ -221,7 +231,8 @@ def run_once() -> dict:
         "risk_officer": roc,
         "top_symbols": candidates[: int(cfg.TARGET_POSITIONS)],
         "targets": targets_banded,
-        "orders_submitted": orders
+        "orders_submitted": orders,
+        "simulated": bool(getattr(trade_client, "is_simulated", False))
     }
     write_jsonl(C.EPISODES_PATH, ep)
     return ep

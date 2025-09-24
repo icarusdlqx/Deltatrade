@@ -1,123 +1,279 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Deltatrade V1 · Settings</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 20px; }
-    h1 { margin: 0 0 6px 0; }
-    form { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px; align-items:end;}
-    .group { border:1px solid #e5e7eb; border-radius:12px; padding:12px; }
-    label { display:block; font-weight:600; margin-bottom:4px; }
-    input, select { width:100%; padding:8px; border:1px solid #d1d5db; border-radius:8px; }
-    .row { display:flex; align-items:center; gap:8px; }
-    .btn { display:inline-block; padding:10px 14px; background:#111827; color:#fff; border-radius:8px; text-decoration:none; }
-    .note { color:#555; font-size:0.9em; }
-  </style>
-</head>
-<body>
-  <h1>Deltatrade V1 · Settings</h1>
-  <p class="note">Overrides persist to <code>data/settings_overrides.json</code> and are picked up by the scheduler on the next loop.</p>
-  <form method="post">
-    <div class="group">
-      <label><input type="checkbox" name="AUTOMATION_ENABLED" {% if cfg.AUTOMATION_ENABLED %}checked{% endif %}> Automation enabled</label>
-      <label><input type="checkbox" name="DRY_RUN" {% if cfg.DRY_RUN %}checked{% endif %}> Dry run (no orders)</label>
-      <label><input type="checkbox" name="ENABLE_EVENT_SCORE" {% if cfg.ENABLE_EVENT_SCORE %}checked{% endif %}> Use event/news alpha</label>
-      <label><input type="checkbox" name="ENABLE_COST_GATE" {% if cfg.ENABLE_COST_GATE %}checked{% endif %}> Cost gate on</label>
-      <label><input type="checkbox" name="ENABLE_VOL_TARGETING" {% if cfg.ENABLE_VOL_TARGETING %}checked{% endif %}> Vol targeting on</label>
+{% extends "base.html" %}
+
+{% block title %}Settings · Deltatrade{% endblock %}
+{% block header_title %}Strategy settings{% endblock %}
+
+{% block content %}
+<form method="post" class="settings-form">
+  <div class="row g-4">
+    <div class="col-12 col-xl-4">
+      <div class="card card-surface p-4 h-100">
+        <h5 class="fw-semibold mb-3">Automation</h5>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="AUTOMATION_ENABLED" name="AUTOMATION_ENABLED" {% if cfg.AUTOMATION_ENABLED %}checked{% endif %}>
+          <label class="form-check-label" for="AUTOMATION_ENABLED">Scheduler enabled</label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="DRY_RUN" name="DRY_RUN" {% if cfg.DRY_RUN %}checked{% endif %}>
+          <label class="form-check-label" for="DRY_RUN">Dry-run mode</label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="ENABLE_COST_GATE" name="ENABLE_COST_GATE" {% if cfg.ENABLE_COST_GATE %}checked{% endif %}>
+          <label class="form-check-label" for="ENABLE_COST_GATE">Cost gate</label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="ENABLE_EVENT_SCORE" name="ENABLE_EVENT_SCORE" {% if cfg.ENABLE_EVENT_SCORE %}checked{% endif %}>
+          <label class="form-check-label" for="ENABLE_EVENT_SCORE">AI news scoring</label>
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" id="ENABLE_VOL_TARGETING" name="ENABLE_VOL_TARGETING" {% if cfg.ENABLE_VOL_TARGETING %}checked{% endif %}>
+          <label class="form-check-label" for="ENABLE_VOL_TARGETING">Vol targeting</label>
+        </div>
+      </div>
     </div>
 
-    <div class="group">
-      <label>Trading windows (ET, comma‑sep)</label>
-      <input name="TRADING_WINDOWS_ET" value="{{ ','.join(cfg.TRADING_WINDOWS_ET) }}">
-      <label>Window tolerance (min)</label>
-      <input name="WINDOW_TOL_MIN" type="number" step="1" value="{{ cfg.WINDOW_TOL_MIN }}">
-      <label>Avoid near close (min)</label>
-      <input name="AVOID_NEAR_CLOSE_MIN" type="number" step="1" value="{{ cfg.AVOID_NEAR_CLOSE_MIN }}">
-    </div>
+    <div class="col-12 col-xl-8">
+      <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Trading windows & universe</h5>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="form-floating">
+              <input type="text" class="form-control" id="TRADING_WINDOWS_ET" name="TRADING_WINDOWS_ET" value="{{ cfg.TRADING_WINDOWS_ET|join(', ') }}">
+              <label for="TRADING_WINDOWS_ET">Trading windows (ET)</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="WINDOW_TOL_MIN" name="WINDOW_TOL_MIN" value="{{ cfg.WINDOW_TOL_MIN }}">
+              <label for="WINDOW_TOL_MIN">Window tolerance (min)</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="AVOID_NEAR_CLOSE_MIN" name="AVOID_NEAR_CLOSE_MIN" value="{{ cfg.AVOID_NEAR_CLOSE_MIN }}">
+              <label for="AVOID_NEAR_CLOSE_MIN">Avoid close (min)</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-floating">
+              <select class="form-select" id="UNIVERSE_MODE" name="UNIVERSE_MODE">
+                <option value="etfs_only" {% if cfg.UNIVERSE_MODE == 'etfs_only' %}selected{% endif %}>ETF core</option>
+                <option value="sp500_etfs" {% if cfg.UNIVERSE_MODE == 'sp500_etfs' %}selected{% endif %}>S&P 500 + ETF overlay</option>
+              </select>
+              <label for="UNIVERSE_MODE">Universe mode</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="UNIVERSE_MAX" name="UNIVERSE_MAX" value="{{ cfg.UNIVERSE_MAX }}">
+              <label for="UNIVERSE_MAX">Universe cap</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="TARGET_POSITIONS" name="TARGET_POSITIONS" value="{{ cfg.TARGET_POSITIONS }}">
+              <label for="TARGET_POSITIONS">Target positions</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="DATA_LOOKBACK_DAYS" name="DATA_LOOKBACK_DAYS" value="{{ cfg.DATA_LOOKBACK_DAYS }}">
+              <label for="DATA_LOOKBACK_DAYS">Data lookback days</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="MIN_BARS" name="MIN_BARS" value="{{ cfg.MIN_BARS }}">
+              <label for="MIN_BARS">Minimum bars</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="CASH_BUFFER" name="CASH_BUFFER" value="{{ cfg.CASH_BUFFER }}">
+              <label for="CASH_BUFFER">Cash buffer</label>
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <div class="group">
-      <label>Universe mode</label>
-      <select name="UNIVERSE_MODE">
-        <option value="etfs_only" {% if cfg.UNIVERSE_MODE=='etfs_only' %}selected{% endif %}>ETFs only (default)</option>
-        <option value="sp500_etfs" {% if cfg.UNIVERSE_MODE=='sp500_etfs' %}selected{% endif %}>S&P500 + ETFs (requires data/sp500.csv)</option>
-      </select>
-      <label>Universe max</label>
-      <input name="UNIVERSE_MAX" type="number" step="1" value="{{ cfg.UNIVERSE_MAX }}">
-      <label>Data lookback days</label>
-      <input name="DATA_LOOKBACK_DAYS" type="number" step="1" value="{{ cfg.DATA_LOOKBACK_DAYS }}">
-      <label>Min bars</label>
-      <input name="MIN_BARS" type="number" step="1" value="{{ cfg.MIN_BARS }}">
-    </div>
+      <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Factor & event inputs</h5>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="RESID_MOM_LOOKBACK" name="RESID_MOM_LOOKBACK" value="{{ cfg.RESID_MOM_LOOKBACK }}">
+              <label for="RESID_MOM_LOOKBACK">Residual lookback</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="TREND_FAST" name="TREND_FAST" value="{{ cfg.TREND_FAST }}">
+              <label for="TREND_FAST">Trend fast</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="TREND_SLOW" name="TREND_SLOW" value="{{ cfg.TREND_SLOW }}">
+              <label for="TREND_SLOW">Trend slow</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="REVERSAL_DAYS" name="REVERSAL_DAYS" value="{{ cfg.REVERSAL_DAYS }}">
+              <label for="REVERSAL_DAYS">Reversal days</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="WINSOR_PCT" name="WINSOR_PCT" value="{{ cfg.WINSOR_PCT }}">
+              <label for="WINSOR_PCT">Winsor percentile</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="NEWS_LOOKBACK_DAYS" name="NEWS_LOOKBACK_DAYS" value="{{ cfg.NEWS_LOOKBACK_DAYS }}">
+              <label for="NEWS_LOOKBACK_DAYS">News lookback</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="EVENT_TOP_K" name="EVENT_TOP_K" value="{{ cfg.EVENT_TOP_K }}">
+              <label for="EVENT_TOP_K">News breadth (top K)</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.1" class="form-control" id="EVENT_ALPHA_MULT" name="EVENT_ALPHA_MULT" value="{{ cfg.EVENT_ALPHA_MULT }}">
+              <label for="EVENT_ALPHA_MULT">Event alpha multiplier</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="SLEEVE_XSEC" name="SLEEVE_XSEC" value="{{ cfg.SLEEVE_WEIGHTS.get('xsec', 0) }}">
+              <label for="SLEEVE_XSEC">Cross-section sleeve weight</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="SLEEVE_EVENT" name="SLEEVE_EVENT" value="{{ cfg.SLEEVE_WEIGHTS.get('event', 0) }}">
+              <label for="SLEEVE_EVENT">Event sleeve weight</label>
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <div class="group">
-      <label>Event top‑K</label>
-      <input name="EVENT_TOP_K" type="number" step="1" value="{{ cfg.EVENT_TOP_K }}">
-      <label>News lookback (days)</label>
-      <input name="NEWS_LOOKBACK_DAYS" type="number" step="1" value="{{ cfg.NEWS_LOOKBACK_DAYS }}">
-      <label>Event alpha multiplier</label>
-      <input name="EVENT_ALPHA_MULT" type="number" step="0.1" value="{{ cfg.EVENT_ALPHA_MULT }}">
-    </div>
+      <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Risk & optimization</h5>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="TARGET_PORTFOLIO_VOL" name="TARGET_PORTFOLIO_VOL" value="{{ cfg.TARGET_PORTFOLIO_VOL }}">
+              <label for="TARGET_PORTFOLIO_VOL">Target volatility</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.1" class="form-control" id="LAMBDA_RISK" name="LAMBDA_RISK" value="{{ cfg.LAMBDA_RISK }}">
+              <label for="LAMBDA_RISK">Risk aversion</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.0001" class="form-control" id="TURNOVER_PENALTY" name="TURNOVER_PENALTY" value="{{ cfg.TURNOVER_PENALTY }}">
+              <label for="TURNOVER_PENALTY">Turnover penalty</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="REBALANCE_BAND" name="REBALANCE_BAND" value="{{ cfg.REBALANCE_BAND }}">
+              <label for="REBALANCE_BAND">Rebalance band</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="NAME_MAX" name="NAME_MAX" value="{{ cfg.NAME_MAX }}">
+              <label for="NAME_MAX">Single name cap</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="SECTOR_MAX" name="SECTOR_MAX" value="{{ cfg.SECTOR_MAX }}">
+              <label for="SECTOR_MAX">Sector cap</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="FILL_TIMEOUT_SEC" name="FILL_TIMEOUT_SEC" value="{{ cfg.FILL_TIMEOUT_SEC }}">
+              <label for="FILL_TIMEOUT_SEC">Limit fill timeout (s)</label>
+            </div>
+          </div>
+        </div>
+      </div>
 
-    <div class="group">
-      <label>Target portfolio vol (ann.)</label>
-      <input name="TARGET_PORTFOLIO_VOL" type="number" step="0.01" value="{{ cfg.TARGET_PORTFOLIO_VOL }}">
-      <label>Risk aversion (lambda)</label>
-      <input name="LAMBDA_RISK" type="number" step="0.1" value="{{ cfg.LAMBDA_RISK }}">
-      <label>Turnover penalty</label>
-      <input name="TURNOVER_PENALTY" type="number" step="0.0001" value="{{ cfg.TURNOVER_PENALTY }}">
-      <label>Name max weight</label>
-      <input name="NAME_MAX" type="number" step="0.01" value="{{ cfg.NAME_MAX }}">
-      <label>Sector max weight</label>
-      <input name="SECTOR_MAX" type="number" step="0.01" value="{{ cfg.SECTOR_MAX }}">
-      <label>Rebalance band</label>
-      <input name="REBALANCE_BAND" type="number" step="0.01" value="{{ cfg.REBALANCE_BAND }}">
-      <label>Target positions</label>
-      <input name="TARGET_POSITIONS" type="number" step="1" value="{{ cfg.TARGET_POSITIONS }}">
-      <label>Cash buffer</label>
-      <input name="CASH_BUFFER" type="number" step="0.01" value="{{ cfg.CASH_BUFFER }}">
+      <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Execution & costs</h5>
+        <div class="row g-3">
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="MIN_ORDER_NOTIONAL" name="MIN_ORDER_NOTIONAL" value="{{ cfg.MIN_ORDER_NOTIONAL }}">
+              <label for="MIN_ORDER_NOTIONAL">Min order notional</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="MAX_SLICES" name="MAX_SLICES" value="{{ cfg.MAX_SLICES }}">
+              <label for="MAX_SLICES">Max slices</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="LIMIT_SLIP_BP" name="LIMIT_SLIP_BP" value="{{ cfg.LIMIT_SLIP_BP }}">
+              <label for="LIMIT_SLIP_BP">Limit slip (bps)</label>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="COST_SPREAD_BPS" name="COST_SPREAD_BPS" value="{{ cfg.COST_SPREAD_BPS }}">
+              <label for="COST_SPREAD_BPS">Spread cost (bps)</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="COST_IMPACT_KAPPA" name="COST_IMPACT_KAPPA" value="{{ cfg.COST_IMPACT_KAPPA }}">
+              <label for="COST_IMPACT_KAPPA">Impact kappa</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.01" class="form-control" id="COST_IMPACT_PSI" name="COST_IMPACT_PSI" value="{{ cfg.COST_IMPACT_PSI }}">
+              <label for="COST_IMPACT_PSI">Impact psi</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.1" class="form-control" id="ATR_STOP_MULT" name="ATR_STOP_MULT" value="{{ cfg.ATR_STOP_MULT }}">
+              <label for="ATR_STOP_MULT">ATR stop multiple</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" step="0.1" class="form-control" id="TAKE_PROFIT_ATR" name="TAKE_PROFIT_ATR" value="{{ cfg.TAKE_PROFIT_ATR }}">
+              <label for="TAKE_PROFIT_ATR">ATR take profit</label>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" class="form-control" id="TIME_STOP_DAYS" name="TIME_STOP_DAYS" value="{{ cfg.TIME_STOP_DAYS }}">
+              <label for="TIME_STOP_DAYS">Time stop (days)</label>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
 
-    <div class="group">
-      <label>Sleeve weight — cross‑sectional</label>
-      <input name="SLEEVE_XSEC" type="number" step="0.05" value="{{ cfg.SLEEVE_WEIGHTS['xsec'] }}">
-      <label>Sleeve weight — event</label>
-      <input name="SLEEVE_EVENT" type="number" step="0.05" value="{{ cfg.SLEEVE_WEIGHTS['event'] }}">
-    </div>
-
-    <div class="group">
-      <label>Min order notional ($)</label>
-      <input name="MIN_ORDER_NOTIONAL" type="number" step="1" value="{{ cfg.MIN_ORDER_NOTIONAL }}">
-      <label>Max slices</label>
-      <input name="MAX_SLICES" type="number" step="1" value="{{ cfg.MAX_SLICES }}">
-      <label>Limit slip (bp)</label>
-      <input name="LIMIT_SLIP_BP" type="number" step="1" value="{{ cfg.LIMIT_SLIP_BP }}">
-      <label>Cost spread (bp)</label>
-      <input name="COST_SPREAD_BPS" type="number" step="0.1" value="{{ cfg.COST_SPREAD_BPS }}">
-      <label>Impact kappa</label>
-      <input name="COST_IMPACT_KAPPA" type="number" step="0.01" value="{{ cfg.COST_IMPACT_KAPPA }}">
-      <label>Impact psi</label>
-      <input name="COST_IMPACT_PSI" type="number" step="0.1" value="{{ cfg.COST_IMPACT_PSI }}">
-      <label>Fill timeout (sec)</label>
-      <input name="FILL_TIMEOUT_SEC" type="number" step="1" value="{{ cfg.FILL_TIMEOUT_SEC }}">
-    </div>
-
-    <div class="group">
-      <label>ATR stop ×</label>
-      <input name="ATR_STOP_MULT" type="number" step="0.1" value="{{ cfg.ATR_STOP_MULT }}">
-      <label>Take profit × ATR</label>
-      <input name="TAKE_PROFIT_ATR" type="number" step="0.1" value="{{ cfg.TAKE_PROFIT_ATR }}">
-      <label>Time stop (days)</label>
-      <input name="TIME_STOP_DAYS" type="number" step="1" value="{{ cfg.TIME_STOP_DAYS }}">
-    </div>
-
-    <div style="grid-column:1/-1;">
-      <button class="btn" type="submit">Save settings</button>
-      <a class="btn" href="{{ url_for('dashboard') }}" style="background:#374151;">Back to dashboard</a>
-      <p class="note">Active overrides (JSON):</p>
-      <pre>{{ ov | tojson(indent=2) }}</pre>
-    </div>
-  </form>
-</body>
-</html>
+  <div class="d-flex justify-content-end mt-3">
+    <button type="submit" class="btn btn-primary px-4">Save changes</button>
+  </div>
+</form>
+{% endblock %}
