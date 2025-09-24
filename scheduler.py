@@ -30,13 +30,23 @@ def near_close_guard(trading_client, avoid_min):
 
 if __name__ == "__main__":
     cfg = get_cfg()
-    tc = TradingClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"],
-                       paper=os.environ.get("ALPACA_PAPER","true").lower() in ("true","1","yes","y"))
-    print("Deltatrade V1 scheduler starting…")
+    
+    # Check if API keys are available
+    alpaca_key = os.environ.get("ALPACA_API_KEY")
+    alpaca_secret = os.environ.get("ALPACA_SECRET_KEY")
+    
+    if alpaca_key and alpaca_secret:
+        tc = TradingClient(alpaca_key, alpaca_secret,
+                           paper=os.environ.get("ALPACA_PAPER","true").lower() in ("true","1","yes","y"))
+        print("Deltatrade V1 scheduler starting with Alpaca API…")
+    else:
+        # Run without trading client for simulated mode
+        tc = None
+        print("Deltatrade V1 scheduler starting in simulated mode (no API keys)…")
     while True:
         cfg = get_cfg()  # re-read overrides each loop
         now = datetime.now(pytz.utc)
-        if cfg.AUTOMATION_ENABLED and in_window_et(now, cfg.TRADING_WINDOWS_ET, int(cfg.WINDOW_TOL_MIN)) and not near_close_guard(tc, int(cfg.AVOID_NEAR_CLOSE_MIN)):
+        if cfg.AUTOMATION_ENABLED and in_window_et(now, cfg.TRADING_WINDOWS_ET, int(cfg.WINDOW_TOL_MIN)) and not (tc and near_close_guard(tc, int(cfg.AVOID_NEAR_CLOSE_MIN))):
             try:
                 ep = run_once()
                 print("Episode:", ep.get("as_of"), "proceed=", ep.get("proceed"), "orders=", len(ep.get("orders_submitted",[])))
