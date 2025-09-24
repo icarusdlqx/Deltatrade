@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Deltatrade V1 · Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 20px; }
+    h1 { margin: 0 0 6px 0; }
+    .note { color: #555; font-size: 0.95em; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border-bottom: 1px solid #eaeaea; padding: 8px; text-align: left; }
+    .pill { display:inline-block; padding:2px 8px; border-radius: 12px; background:#f3f4f6; margin-left:6px; font-size:0.85em;}
+    .btn { display:inline-block; padding:8px 12px; background:#111827; color:#fff; border-radius:8px; text-decoration:none; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; flex:1; min-width:260px;}
+    pre { background:#0b1020; color:#c7d2fe; padding:12px; border-radius:8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h1>Deltatrade V1 <span class="pill">Autonomous</span></h1>
+  <div class="note">Windows (ET): {{ ', '.join(cfg.TRADING_WINDOWS_ET) }} · Tol ±{{ cfg.WINDOW_TOL_MIN }} min · Avoid near close {{ cfg.AVOID_NEAR_CLOSE_MIN }} min</div>
+
+  <div class="row" style="margin-top:16px;">
+    <div class="card">
+      <h3>Controls</h3>
+      <form method="post" action="{{ url_for('run_now') }}">
+        <button class="btn" type="submit">Run now</button>
+      </form>
+      <p class="note">Automation: <b>{{ 'ON' if cfg.AUTOMATION_ENABLED else 'OFF' }}</b> · DRY_RUN: <b>{{ 'ON' if cfg.DRY_RUN else 'OFF' }}</b></p>
+      <p><a class="btn" href="{{ url_for('settings') }}">Settings</a></p>
+    </div>
+    <div class="card">
+      <h3>Health</h3>
+      <p>OpenAI key: <b>{{ 'yes' if health.openai_present else 'no' }}</b></p>
+      <p>Alpaca (paper): <b>{{ health.alpaca_paper }}</b></p>
+      <p>As of: {{ health.as_of }}</p>
+    </div>
+  </div>
+
+  <h2 style="margin-top:24px;">Recent episodes</h2>
+  {% if episodes %}
+  <table>
+    <thead>
+      <tr><th>As of (UTC)</th><th>Proceed</th><th>Exp α (bps)</th><th>Cost (bps)</th><th>Top symbols</th><th>Orders</th></tr>
+    </thead>
+    <tbody>
+      {% for e in episodes %}
+        <tr>
+          <td>{{ e.as_of }}</td>
+          <td>{{ e.proceed }}</td>
+          <td>{{ '%.1f'|format(e.expected_alpha_bps) if e.expected_alpha_bps is not none else '' }}</td>
+          <td>{{ '%.1f'|format(e.est_cost_bps) if e.est_cost_bps is not none else '' }}</td>
+          <td>{{ ', '.join(e.top_symbols or []) }}</td>
+          <td>{{ (e.orders_submitted|length) if e.orders_submitted else 0 }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">No episodes yet. Click “Run now” or wait for the next window.</p>
+  {% endif %}
+</body>
+</html>
