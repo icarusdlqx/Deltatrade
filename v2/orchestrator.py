@@ -50,22 +50,38 @@ def _universe(cfg) -> List[str]:
     return syms
 
 def _fetch_bars(client: StockHistoricalDataClient, symbols: List[str], days: int) -> Dict[str, pd.DataFrame]:
-    end = datetime.now(timezone.utc); start = end - timedelta(days=days + 10)
-    out: Dict[str, pd.DataFrame] = {}
-    B = 150
-    for i in range(0, len(symbols), B):
-        chunk = symbols[i:i+B]
-        req = StockBarsRequest(symbol_or_symbols=chunk, timeframe=TimeFrame.Day, start=start, end=end)
-        bars = client.get_stock_bars(req)
-        df = getattr(bars, "df", None)
-        if df is None or df.empty: 
-            continue
-        for sym, g in df.groupby(level=0):
-            dfg = g.reset_index(level=0, drop=True).sort_index()
-            dfg = dfg.rename(columns={"trade_count":"trades"})
-            out[str(sym)] = dfg[["open","high","low","close","volume"]]
-        time.sleep(0.2)
-    return out
+    try:
+        end = datetime.now(timezone.utc); start = end - timedelta(days=days + 10)
+        out: Dict[str, pd.DataFrame] = {}
+        B = 150
+        for i in range(0, len(symbols), B):
+            chunk = symbols[i:i+B]
+            req = StockBarsRequest(symbol_or_symbols=chunk, timeframe=TimeFrame.Day, start=start, end=end)
+            bars = client.get_stock_bars(req)
+            df = getattr(bars, "df", None)
+            if df is None or df.empty: 
+                continue
+            for sym, g in df.groupby(level=0):
+                dfg = g.reset_index(level=0, drop=True).sort_index()
+                dfg = dfg.rename(columns={"trade_count":"trades"})
+                out[str(sym)] = dfg[["open","high","low","close","volume"]]
+            time.sleep(0.2)
+        return out
+    except Exception as e:
+        # Handle subscription errors (e.g., "subscription does not permit querying recent SIP data")
+        error_msg = str(e).lower()
+        if "subscription" in error_msg or "permit" in error_msg or "forbidden" in error_msg:
+            print(f"Alpaca subscription error: {e}")
+            print("Falling back to simulated data client...")
+            # Use simulated client as fallback
+            if hasattr(client, 'is_simulated') and client.is_simulated:
+                return {}  # Already simulated, return empty
+            from .simulated_clients import SimStockHistoricalDataClient
+            sim_client = SimStockHistoricalDataClient()
+            return _fetch_bars(sim_client, symbols, days)
+        else:
+            # Re-raise other errors
+            raise e
 
 def _sector_map_from_csv() -> Dict[str,str]:
     # Optional: load sectors if data/sp500_sectors.csv present with columns Symbol,GICS Sector

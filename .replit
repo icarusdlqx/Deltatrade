@@ -22,21 +22,17 @@ args = "Deltatrade App"
 name = "Deltatrade App"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python scheduler.py & exec gunicorn -k gevent -b 0.0.0.0:5000 webapp:app"
 waitForPort = 5000
 
-[workflows.workflow.metadata]
-outputType = "webview"
-
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 39001
-externalPort = 3000
 
 [deployment]
 deploymentTarget = "vm"
