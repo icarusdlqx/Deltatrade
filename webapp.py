@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import signal
+import logging
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
@@ -14,6 +16,17 @@ from alpaca.trading.client import TradingClient
 
 from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Timeout handling
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException("Operation timed out")
 
 
 app = Flask(__name__)
