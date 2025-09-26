@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os, time
 from datetime import datetime, timedelta, timezone
+import pytz
 from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
@@ -51,7 +52,11 @@ def _universe(cfg) -> List[str]:
 
 def _fetch_bars(client: StockHistoricalDataClient, symbols: List[str], days: int) -> Dict[str, pd.DataFrame]:
     try:
-        end = datetime.now(timezone.utc); start = end - timedelta(days=days + 10)
+        et_tz = pytz.timezone("US/Eastern")
+        end = datetime.now(et_tz); start = end - timedelta(days=days + 10)
+        # Convert to UTC for API calls
+        end = end.astimezone(timezone.utc)
+        start = start.astimezone(timezone.utc)
         out: Dict[str, pd.DataFrame] = {}
         B = 150
         for i in range(0, len(symbols), B):
@@ -235,11 +240,11 @@ def run_once() -> dict:
         if atr > 0:
             stop = px - float(cfg.ATR_STOP_MULT) * atr
             take = px + float(cfg.TAKE_PROFIT_ATR) * atr
-            stops[s] = {"stop": stop, "take": take, "placed_at": str(datetime.now(timezone.utc)), "ttl_days": int(cfg.TIME_STOP_DAYS)}
+            stops[s] = {"stop": stop, "take": take, "placed_at": str(datetime.now(pytz.timezone("US/Eastern"))), "ttl_days": int(cfg.TIME_STOP_DAYS)}
     write_json(C.STATE_PATH, {"stops": stops})
 
     ep = {
-        "as_of": datetime.now(timezone.utc).isoformat(),
+        "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
         "investable": investable,
         "expected_alpha_bps": expected_alpha_bps,
         "est_cost_bps": est_cost_bps,

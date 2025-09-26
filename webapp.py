@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List
+import pytz
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
@@ -44,7 +45,7 @@ def _environment_summary() -> Dict[str, Any]:
         "paper": paper,
         "simulated": simulated,
         "mode_label": mode_label,
-        "as_of": datetime.utcnow().isoformat() + "Z",
+        "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
     }
 
 
@@ -145,7 +146,7 @@ def _performance_series(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 @app.context_processor
 def inject_nav() -> Dict[str, Any]:
-    return {"nav_items": NAV_ITEMS, "current_year": datetime.utcnow().year}
+    return {"nav_items": NAV_ITEMS, "current_year": datetime.now(pytz.timezone("US/Eastern")).year}
 
 
 @app.route("/")

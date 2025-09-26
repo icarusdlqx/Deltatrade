@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
+import pytz
 from typing import Dict, List
 
 # Robust import across alpaca-py versions
@@ -15,7 +16,9 @@ def fetch_news_map(symbols: List[str], days: int, api_key: str, api_secret: str)
     if NewsClient is None:
         return {s: [] for s in symbols}
     client = NewsClient(api_key=api_key, secret_key=api_secret)
-    start = datetime.now(timezone.utc) - timedelta(days=days)
+    start = datetime.now(pytz.timezone("US/Eastern")) - timedelta(days=days)
+    # Convert to UTC for API calls
+    start = start.astimezone(timezone.utc)
     out: Dict[str, List[dict]] = {s: [] for s in symbols}
     for sym in symbols:
         try:

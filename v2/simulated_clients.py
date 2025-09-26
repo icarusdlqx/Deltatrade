@@ -122,7 +122,7 @@ class _SimOrder:
 class SimTradingClient:
     """Minimal TradingClient facsimile that settles immediately."""
 
-    def __init__(self, data_client: SimStockHistoricalDataClient, starting_cash: float = 250_000.0) -> None:
+    def __init__(self, data_client: SimStockHistoricalDataClient, starting_cash: float = 10_000.0) -> None:
         _ensure_data_dir()
         self._data = data_client
         self._state = self._load_state(starting_cash)
