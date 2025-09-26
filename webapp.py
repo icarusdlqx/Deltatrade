@@ -32,6 +32,32 @@ def timeout_handler(signum, frame):
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "deltatrade-demo")
 
+# Health check route for deployment
+@app.route("/health")
+def health_check():
+    """Simple health check endpoint for deployment verification"""
+    try:
+        # Basic configuration check
+        cfg = get_cfg()
+        
+        # Check if essential components are accessible
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
+            "simulation_mode": not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")),
+            "automation_enabled": cfg.AUTOMATION_ENABLED
+        }
+        
+        return jsonify(health_status), 200
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            "status": "unhealthy", 
+            "error": str(e),
+            "timestamp": datetime.now(pytz.timezone("US/Eastern")).isoformat()
+        }), 500
+
 
 NAV_ITEMS = [
     {"endpoint": "dashboard", "label": "Dashboard", "icon": "bi-speedometer2"},
@@ -205,7 +231,26 @@ def performance():
 
 @app.route("/run-now", methods=["POST"])
 def run_now():
-    run_once()
+    try:
+        logger.info("Manual run_once triggered via web interface")
+        # Set up timeout for run_once (2 minutes for manual runs)
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(120)  # 2 minute timeout for manual runs
+        
+        run_once()
+        signal.alarm(0)  # Cancel timeout
+        logger.info("Manual run_once completed successfully")
+        
+    except TimeoutException:
+        signal.alarm(0)
+        logger.error("Manual run_once timed out after 2 minutes")
+        # Could add flash message here for user feedback
+        
+    except Exception as e:
+        signal.alarm(0)
+        logger.error(f"Manual run_once failed: {e}")
+        # Could add flash message here for user feedback
+        
     return redirect(url_for("dashboard"))
 
 
