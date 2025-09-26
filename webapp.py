@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import logging
+import gevent
 from datetime import datetime
 from pathlib import Path
 from statistics import mean
@@ -17,46 +17,13 @@ from alpaca.trading.client import TradingClient
 from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging for webapp
 logger = logging.getLogger(__name__)
-
-# Timeout handling
-class TimeoutException(Exception):
-    pass
-
-def timeout_handler(signum, frame):
-    raise TimeoutException("Operation timed out")
 
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "deltatrade-demo")
 
-# Health check route for deployment
-@app.route("/health")
-def health_check():
-    """Simple health check endpoint for deployment verification"""
-    try:
-        # Basic configuration check
-        cfg = get_cfg()
-        
-        # Check if essential components are accessible
-        health_status = {
-            "status": "healthy",
-            "timestamp": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
-            "simulation_mode": not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")),
-            "automation_enabled": cfg.AUTOMATION_ENABLED
-        }
-        
-        return jsonify(health_status), 200
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({
-            "status": "unhealthy", 
-            "error": str(e),
-            "timestamp": datetime.now(pytz.timezone("US/Eastern")).isoformat()
-        }), 500
 
 
 NAV_ITEMS = [
@@ -233,23 +200,17 @@ def performance():
 def run_now():
     try:
         logger.info("Manual run_once triggered via web interface")
-        # Set up timeout for run_once (2 minutes for manual runs)
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(120)  # 2 minute timeout for manual runs
         
-        run_once()
-        signal.alarm(0)  # Cancel timeout
+        # Use gevent.Timeout for safe timeout handling in web workers
+        with gevent.Timeout(120):  # Will raise TimeoutError if exceeded
+            run_once()
+        
         logger.info("Manual run_once completed successfully")
-        
-    except TimeoutException:
-        signal.alarm(0)
+            
+    except gevent.Timeout:
         logger.error("Manual run_once timed out after 2 minutes")
-        # Could add flash message here for user feedback
-        
     except Exception as e:
-        signal.alarm(0)
         logger.error(f"Manual run_once failed: {e}")
-        # Could add flash message here for user feedback
         
     return redirect(url_for("dashboard"))
 
@@ -317,14 +278,28 @@ def logout():
 
 @app.route("/health")
 def health():
-    env = _environment_summary()
-    return jsonify({
-        "ok": True,
-        "alpaca_api_key_present": env["alpaca_key"],
-        "openai_api_key_present": env["openai_key"],
-        "paper": env["paper"],
-        "simulated": env["simulated"],
-    })
+    """Health check endpoint for deployment verification"""
+    try:
+        # Basic configuration check
+        cfg = get_cfg()
+        env = _environment_summary()
+        
+        # Return minimal health information (don't expose sensitive details)
+        return jsonify({
+            "ok": True,
+            "status": "healthy",
+            "timestamp": env["as_of"],
+            "simulation_mode": env["simulated"]
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            "ok": False,
+            "status": "unhealthy", 
+            "error": str(e),
+            "timestamp": datetime.now(pytz.timezone("US/Eastern")).isoformat()
+        }), 500
 
 
 if __name__ == "__main__":
