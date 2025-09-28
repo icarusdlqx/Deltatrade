@@ -32,10 +32,26 @@ def in_window_et(now, windows, tol_min):
 def near_close_guard(trading_client, avoid_min):
     try:
         clock = trading_client.get_clock()
-        if not clock.is_open:
-            return True
-        now = datetime.now(pytz.timezone("US/Eastern"))
-        return (clock.next_close - now).total_seconds()/60.0 <= avoid_min
+        if clock is None:
+            return False
+
+        if not getattr(clock, "is_open", False):
+            # When the market is already closed we should not block automation.
+            return False
+
+        et_tz = pytz.timezone("US/Eastern")
+        now = datetime.now(et_tz)
+
+        next_close = getattr(clock, "next_close", None)
+        if next_close is None:
+            return False
+
+        if next_close.tzinfo is None:
+            next_close = pytz.utc.localize(next_close)
+        next_close = next_close.astimezone(et_tz)
+
+        minutes_to_close = (next_close - now).total_seconds() / 60.0
+        return minutes_to_close <= avoid_min
     except Exception as e:
         logger.warning(f"Failed to check market close guard: {e}")
         return False
