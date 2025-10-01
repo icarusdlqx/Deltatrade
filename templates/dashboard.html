@@ -55,6 +55,10 @@
           <div class="metric-value text-danger">{{ '%.2f'|format(latest.est_cost_bps|default(0)) }} bps</div>
         </div>
         <div class="col-sm-6 col-lg-3">
+          <div class="metric-label">Net edge</div>
+          <div class="metric-value text-success">{{ '%.2f'|format(latest.net_edge_bps|default(0)) }} bps</div>
+        </div>
+        <div class="col-sm-6 col-lg-3">
           <div class="metric-label">Investable</div>
           <div class="metric-value">${{ '%.0f'|format(latest.investable|default(0)) }}</div>
         </div>
@@ -98,6 +102,7 @@
               <th class="text-center">Proceed</th>
               <th class="text-end">Expected α (bps)</th>
               <th class="text-end">Costs (bps)</th>
+              <th class="text-end">Net (bps)</th>
               <th>Orders</th>
             </tr>
           </thead>
@@ -114,6 +119,7 @@
               </td>
               <td class="text-end">{{ '%.2f'|format(ep.expected_alpha_bps|default(0)) }}</td>
               <td class="text-end">{{ '%.2f'|format(ep.est_cost_bps|default(0)) }}</td>
+              <td class="text-end">{{ '%.2f'|format(ep.net_edge_bps|default(0)) }}</td>
               <td>
                 {% if ep.orders_submitted %}
                   {{ ep.orders_submitted|length }}
@@ -124,7 +130,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="5" class="text-center text-muted">No recent activity.</td>
+              <td colspan="6" class="text-center text-muted">No recent activity.</td>
             </tr>
             {% endfor %}
           </tbody>
