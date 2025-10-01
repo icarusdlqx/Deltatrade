@@ -204,11 +204,19 @@ def run_once() -> dict:
     adv = _estimate_adv(bars)
     expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_scaled)) * 10000.0
     est_cost_bps = 0.0
+    cost_breakdown = {}
+    investable_denom = max(1.0, investable)
     for s, tgt in targets_banded.items():
         cur = cur_mv_all.get(s, 0.0)
         delta = tgt - cur
-        est_cost_bps += estimate_cost_bps(delta, prices.get(s, 0.0), adv.get(s, 1.0),
+        per_order_bps = estimate_cost_bps(delta, prices.get(s, 0.0), adv.get(s, 1.0),
                                           float(cfg.COST_SPREAD_BPS), float(cfg.COST_IMPACT_KAPPA), float(cfg.COST_IMPACT_PSI))
+        turnover_share = abs(delta) / investable_denom
+        est_cost_bps += per_order_bps * turnover_share
+        cost_breakdown[s] = {
+            "per_order_bps": per_order_bps,
+            "turnover_share": turnover_share,
+        }
     proceed = True if not cfg.ENABLE_COST_GATE else (expected_alpha_bps > est_cost_bps)
 
     # Risk officer
@@ -249,6 +257,7 @@ def run_once() -> dict:
         "investable": investable,
         "expected_alpha_bps": expected_alpha_bps,
         "est_cost_bps": est_cost_bps,
+        "est_cost_breakdown": cost_breakdown,
         "proceed": proceed,
         "risk_officer": roc,
         "top_symbols": candidates[: int(cfg.TARGET_POSITIONS)],
