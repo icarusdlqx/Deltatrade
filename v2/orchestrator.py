@@ -140,8 +140,9 @@ def run_once() -> dict:
     # Factor + event blend
     factor_alpha_bps = 8.0 * panel["score_z"].fillna(0)
     sw = cfg.SLEEVE_WEIGHTS
-    alpha_bps = (sw.get("xsec",0)*factor_alpha_bps).add(sw.get("event",0) * pd.Series(event_alpha_bps))
-    alpha_bps = alpha_bps.fillna(0)
+    factor_component = sw.get("xsec", 0) * factor_alpha_bps
+    event_component = sw.get("event", 0) * pd.Series(event_alpha_bps, dtype=float)
+    alpha_bps = factor_component.add(event_component, fill_value=0.0).fillna(0)
     alpha = alpha_bps / 10000.0  # daily return proxy
 
     # Covariance
