@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, time
+import os, time, logging
 from datetime import datetime, timedelta, timezone
 import pytz
 from typing import Dict, List, Tuple
@@ -19,6 +19,8 @@ from .news import fetch_news_map
 from .agents import score_events_for_symbols, risk_officer_check
 from .optimizer import solve_weights, scale_to_target_vol
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
+
+logger = logging.getLogger(__name__)
 
 def _alpaca_clients():
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -154,6 +156,24 @@ def run_once() -> dict:
 
     # Candidate cut
     candidates = common_syms[:max(int(cfg.TARGET_POSITIONS)*2, int(cfg.TARGET_POSITIONS))]
+    factor_series = factor_component.reindex(candidates).fillna(0.0)
+    event_series = event_component.reindex(candidates).fillna(0.0)
+    alpha_series = alpha_bps.reindex(candidates).fillna(0.0)
+    alpha_breakdown = {
+        "per_symbol_bps": {
+            s: {
+                "factor": float(factor_series.get(s, 0.0)),
+                "event": float(event_series.get(s, 0.0)),
+                "total": float(alpha_series.get(s, 0.0)),
+            }
+            for s in candidates
+        },
+        "sleeve_totals_bps": {
+            "factor": float(factor_series.sum()),
+            "event": float(event_series.sum()),
+            "total": float(alpha_series.sum()),
+        },
+    }
     alpha_vec = alpha.reindex(candidates).fillna(0).values
 
     cur_mv_map, equity_prev, last_prices_live = _current_positions(trade_client)
@@ -205,10 +225,16 @@ def run_once() -> dict:
     expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_scaled)) * 10000.0
     est_cost_bps = 0.0
     cost_breakdown = {}
+    rebalance_deltas: Dict[str, Dict[str, float]] = {}
     investable_denom = max(1.0, investable)
     for s, tgt in targets_banded.items():
         cur = cur_mv_all.get(s, 0.0)
         delta = tgt - cur
+        rebalance_deltas[s] = {
+            "current": cur,
+            "target": tgt,
+            "delta": delta,
+        }
         per_order_bps = estimate_cost_bps(delta, prices.get(s, 0.0), adv.get(s, 1.0),
                                           float(cfg.COST_SPREAD_BPS), float(cfg.COST_IMPACT_KAPPA), float(cfg.COST_IMPACT_PSI))
         turnover_share = abs(delta) / investable_denom
@@ -216,6 +242,9 @@ def run_once() -> dict:
         cost_breakdown[s] = {
             "per_order_bps": per_order_bps,
             "turnover_share": turnover_share,
+            "notional_delta": delta,
+            "current_notional": cur,
+            "target_notional": tgt,
         }
     proceed = True if not cfg.ENABLE_COST_GATE else (expected_alpha_bps > est_cost_bps)
 
@@ -223,6 +252,11 @@ def run_once() -> dict:
     proposed_w = {s: (targets_banded.get(s, 0.0) / max(1.0, investable)) for s in candidates}
     roc = risk_officer_check(proposed_w, {s: rev_sec.get(sector_ids[i], "UNKNOWN") for i, s in enumerate(candidates)},
                              float(cfg.SECTOR_MAX), float(cfg.NAME_MAX))
+    risk_officer_verdict = {
+        "approved": str(roc.get("approved", "false")).lower() == "true",
+        "message": roc.get("message"),
+        "payload": roc,
+    }
 
     orders = []
     if proceed and roc.get("approved") == "true" and targets_banded:
@@ -252,14 +286,34 @@ def run_once() -> dict:
             stops[s] = {"stop": stop, "take": take, "placed_at": str(datetime.now(pytz.timezone("US/Eastern"))), "ttl_days": int(cfg.TIME_STOP_DAYS)}
     write_json(C.STATE_PATH, {"stops": stops})
 
+    net_edge_bps = expected_alpha_bps - est_cost_bps
+    top_changes = sorted(rebalance_deltas.items(), key=lambda kv: abs(kv[1]["delta"]), reverse=True)[:3]
+    changes_summary = ", ".join(
+        f"{sym}: {vals['delta']:+.0f}" for sym, vals in top_changes
+    ) if top_changes else "no meaningful target adjustments"
+    logger.info(
+        "Run summary (proceed=%s)\nExpected alpha: %.2f bps | Estimated cost: %.2f bps (net %.2f bps)\nTop target changes: %s\nRisk officer verdict: %s",
+        proceed,
+        expected_alpha_bps,
+        est_cost_bps,
+        net_edge_bps,
+        changes_summary,
+        risk_officer_verdict.get("message") or roc.get("approved"),
+    )
+
     ep = {
         "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
         "investable": investable,
         "expected_alpha_bps": expected_alpha_bps,
         "est_cost_bps": est_cost_bps,
+        "net_edge_bps": net_edge_bps,
         "est_cost_breakdown": cost_breakdown,
+        "alpha_breakdown": alpha_breakdown,
+        "rebalance_deltas": rebalance_deltas,
+        "rebalance_summary": changes_summary,
         "proceed": proceed,
         "risk_officer": roc,
+        "risk_officer_verdict": risk_officer_verdict,
         "top_symbols": candidates[: int(cfg.TARGET_POSITIONS)],
         "targets": targets_banded,
         "orders_submitted": orders,

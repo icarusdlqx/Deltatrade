@@ -20,6 +20,7 @@
           <th class="text-center">Proceed</th>
           <th class="text-end">Expected α (bps)</th>
           <th class="text-end">Costs (bps)</th>
+          <th class="text-end">Net (bps)</th>
           <th>Orders</th>
           <th style="min-width: 200px;">Notes</th>
         </tr>
@@ -37,6 +38,7 @@
           </td>
           <td class="text-end">{{ '%.2f'|format(ep.expected_alpha_bps|default(0)) }}</td>
           <td class="text-end">{{ '%.2f'|format(ep.est_cost_bps|default(0)) }}</td>
+          <td class="text-end">{{ '%.2f'|format(ep.net_edge_bps|default(0)) }}</td>
           <td>
             {% if ep.orders_submitted %}
               {{ ep.orders_submitted|length }} ids
@@ -45,13 +47,24 @@
             {% endif %}
           </td>
           <td class="text-muted small">
+            {% set verdict = ep.get('risk_officer_verdict', {}) %}
             {% set risk = ep.get('risk_officer', {}) %}
-            {% if risk.message %}{{ risk.message }}{% elif risk.approved %}Risk officer: {{ risk.approved }}{% else %}—{% endif %}
+            {% set note = verdict.message or risk.get('message') %}
+            {% if note %}
+              {{ note }}
+            {% elif verdict.approved %}
+              Risk officer: approved
+            {% elif risk.approved %}
+              Risk officer: {{ risk.approved }}
+            {% else %}
+              —
+            {% endif %}
+            {% if ep.rebalance_summary %}<br><span class="text-body">Δ {{ ep.rebalance_summary }}</span>{% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" class="text-center text-muted py-4">No runs recorded yet.</td>
+          <td colspan="7" class="text-center text-muted py-4">No runs recorded yet.</td>
         </tr>
         {% endfor %}
       </tbody>
