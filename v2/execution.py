@@ -17,6 +17,8 @@ class OrderPlan:
 
 def estimate_cost_bps(delta_notional: float, price: float, adv: float,
                       spread_bps: float, kappa: float, psi: float) -> float:
+    if abs(delta_notional) <= 1e-6:
+        return 0.0
     if price <= 0 or adv <= 0:
         return abs(spread_bps)
     qty = abs(delta_notional) / price
