@@ -227,6 +227,7 @@ def run_once() -> dict:
     cost_breakdown = {}
     rebalance_deltas: Dict[str, Dict[str, float]] = {}
     investable_denom = max(1.0, investable)
+    turnover_total = 0.0
     for s, tgt in targets_banded.items():
         cur = cur_mv_all.get(s, 0.0)
         delta = tgt - cur
@@ -239,6 +240,7 @@ def run_once() -> dict:
                                           float(cfg.COST_SPREAD_BPS), float(cfg.COST_IMPACT_KAPPA), float(cfg.COST_IMPACT_PSI))
         turnover_share = abs(delta) / investable_denom
         est_cost_bps += per_order_bps * turnover_share
+        turnover_total += turnover_share
         cost_breakdown[s] = {
             "per_order_bps": per_order_bps,
             "turnover_share": turnover_share,
@@ -246,7 +248,77 @@ def run_once() -> dict:
             "current_notional": cur,
             "target_notional": tgt,
         }
-    proceed = True if not cfg.ENABLE_COST_GATE else (expected_alpha_bps > est_cost_bps)
+    turnover_bps = turnover_total * 10000.0
+    net_alpha_bps = expected_alpha_bps - est_cost_bps
+    MIN_ORDER_NOTIONAL = float(cfg.MIN_ORDER_NOTIONAL)
+    MIN_NET_BPS_TO_TRADE = float(getattr(cfg, "MIN_NET_BPS_TO_TRADE", 0.0))
+    turnover_cap = float(getattr(cfg, "TURNOVER_CAP", 0.0) or 0.0)
+
+    planned_orders = []
+    if targets_banded:
+        planned_orders = build_order_plans(
+            targets_banded,
+            cur_mv_all,
+            prices,
+            adv,
+            MIN_ORDER_NOTIONAL,
+            int(cfg.MAX_SLICES),
+            float(cfg.COST_SPREAD_BPS),
+            float(cfg.COST_IMPACT_KAPPA),
+            float(cfg.COST_IMPACT_PSI),
+        )
+
+    cost_bps = est_cost_bps
+    logger.info(
+        "gate_check",
+        extra={
+            "order_count": len(planned_orders),
+            "turnover_bps": float(turnover_bps),
+            "cost_bps": float(cost_bps),
+            "net_alpha_bps": float(net_alpha_bps),
+            "min_notional": float(MIN_ORDER_NOTIONAL),
+            "min_net_bps": float(MIN_NET_BPS_TO_TRADE),
+        },
+    )
+
+    try:
+        cash_balance = float(getattr(acct, "cash", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        cash_balance = 0.0
+    cash_ratio = cash_balance / equity if equity > 0 else 0.0
+    onboarding_gate = cash_ratio >= 0.90 and len(planned_orders) > 0
+
+    proceed = True
+    gate_reason = None
+    if not targets_banded:
+        proceed = False
+        gate_reason = "no_targets"
+    elif len(planned_orders) == 0:
+        proceed = False
+        gate_reason = "no_planned_orders"
+    elif turnover_cap > 0 and turnover_total > turnover_cap:
+        proceed = False
+        gate_reason = "turnover_cap"
+    elif bool(cfg.ENABLE_COST_GATE) and not onboarding_gate:
+        if net_alpha_bps < MIN_NET_BPS_TO_TRADE:
+            proceed = False
+            gate_reason = "net_bps_below_min"
+        elif expected_alpha_bps <= est_cost_bps:
+            proceed = False
+            gate_reason = "alpha_not_covering_cost"
+
+    if not proceed:
+        logger.info(
+            "gate_check_blocked",
+            extra={
+                "order_count": len(planned_orders),
+                "turnover_bps": float(turnover_bps),
+                "cost_bps": float(cost_bps),
+                "net_alpha_bps": float(net_alpha_bps),
+                "gate_reason": gate_reason,
+                "onboarding_override": onboarding_gate,
+            },
+        )
 
     # Risk officer
     proposed_w = {s: (targets_banded.get(s, 0.0) / max(1.0, investable)) for s in candidates}
@@ -259,14 +331,17 @@ def run_once() -> dict:
     }
 
     orders = []
-    if proceed and roc.get("approved") == "true" and targets_banded:
+    if proceed and roc.get("approved") == "true" and planned_orders:
         if bool(cfg.DRY_RUN):
             orders = ["DRY_RUN_NO_ORDERS"]
         else:
-            plans = build_order_plans(targets_banded, cur_mv_all, prices, adv,
-                                      float(cfg.MIN_ORDER_NOTIONAL), int(cfg.MAX_SLICES),
-                                      float(cfg.COST_SPREAD_BPS), float(cfg.COST_IMPACT_KAPPA), float(cfg.COST_IMPACT_PSI))
-            order_ids = place_orders_with_limits(trade_client, plans, prices, int(cfg.LIMIT_SLIP_BP), fill_timeout_sec=int(cfg.FILL_TIMEOUT_SEC))
+            order_ids = place_orders_with_limits(
+                trade_client,
+                planned_orders,
+                prices,
+                int(cfg.LIMIT_SLIP_BP),
+                fill_timeout_sec=int(cfg.FILL_TIMEOUT_SEC),
+            )
             orders = order_ids
 
     # Stops/time exits (stored only)
@@ -317,6 +392,8 @@ def run_once() -> dict:
         "top_symbols": candidates[: int(cfg.TARGET_POSITIONS)],
         "targets": targets_banded,
         "orders_submitted": orders,
+        "gate_reason": gate_reason,
+        "onboarding_gate": onboarding_gate,
         "simulated": bool(getattr(trade_client, "is_simulated", False))
     }
     write_jsonl(C.EPISODES_PATH, ep)
