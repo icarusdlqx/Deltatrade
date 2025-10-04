@@ -207,13 +207,23 @@ def run_once() -> dict:
     investable = equity * (1 - float(cfg.CASH_BUFFER))
     targets = {s: float(w * investable) for s, w in zip(candidates, w_scaled)}
 
-    # Rebalance bands
+    # Calculate cash ratio early for onboarding detection
+    try:
+        cash_balance = float(getattr(acct, "cash", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        cash_balance = 0.0
+    cash_ratio = cash_balance / equity if equity > 0 else 0.0
+    is_onboarding = cash_ratio >= 0.90
+
+    # Rebalance bands (skip for initial allocation from cash)
     cur_mv_all = {p.symbol: float(p.market_value) for p in trade_client.get_all_positions()}
     targets_banded = {}
     for s, tgt in targets.items():
         cur = cur_mv_all.get(s, 0.0)
         if cur == 0:
-            targets_banded[s] = tgt
+            # Always include new positions, especially during onboarding
+            if abs(tgt) > 0:
+                targets_banded[s] = tgt
         else:
             drift = abs(tgt - cur) / max(1.0, abs(tgt))
             if drift >= float(cfg.REBALANCE_BAND):
@@ -254,6 +264,7 @@ def run_once() -> dict:
     MIN_NET_BPS_TO_TRADE = float(getattr(cfg, "MIN_NET_BPS_TO_TRADE", 0.0))
     turnover_cap = float(getattr(cfg, "TURNOVER_CAP", 0.0) or 0.0)
 
+    # Build order plans (always do this if we have targets, especially for onboarding)
     planned_orders = []
     if targets_banded:
         planned_orders = build_order_plans(
@@ -267,6 +278,18 @@ def run_once() -> dict:
             float(cfg.COST_IMPACT_KAPPA),
             float(cfg.COST_IMPACT_PSI),
         )
+        
+        # Log onboarding scenario
+        if is_onboarding and len(planned_orders) > 0:
+            logger.info(
+                "onboarding_detected",
+                extra={
+                    "cash_ratio": float(cash_ratio),
+                    "planned_orders": len(planned_orders),
+                    "targets_count": len(targets_banded),
+                    "reason": "initial_allocation_from_cash"
+                }
+            )
 
     cost_bps = est_cost_bps
     logger.info(
@@ -278,22 +301,20 @@ def run_once() -> dict:
             "net_alpha_bps": float(net_alpha_bps),
             "min_notional": float(MIN_ORDER_NOTIONAL),
             "min_net_bps": float(MIN_NET_BPS_TO_TRADE),
+            "cash_ratio": float(cash_ratio),
+            "is_onboarding": bool(is_onboarding),
         },
     )
 
-    try:
-        cash_balance = float(getattr(acct, "cash", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        cash_balance = 0.0
-    cash_ratio = cash_balance / equity if equity > 0 else 0.0
-    onboarding_gate = cash_ratio >= 0.90 and len(planned_orders) > 0
+    # Onboarding gate: allow initial allocation from all-cash even with low alpha
+    onboarding_gate = is_onboarding and (len(planned_orders) > 0 or len(targets_banded) > 0)
 
     proceed = True
     gate_reason = None
     if not targets_banded:
         proceed = False
         gate_reason = "no_targets"
-    elif len(planned_orders) == 0:
+    elif len(planned_orders) == 0 and not onboarding_gate:
         proceed = False
         gate_reason = "no_planned_orders"
     elif turnover_cap > 0 and turnover_total > turnover_cap:
@@ -306,6 +327,11 @@ def run_once() -> dict:
         elif expected_alpha_bps <= est_cost_bps:
             proceed = False
             gate_reason = "alpha_not_covering_cost"
+    
+    # Override: Allow onboarding even with low alpha if we have targets
+    if onboarding_gate and targets_banded:
+        proceed = True
+        gate_reason = "onboarding_override"
 
     if not proceed:
         logger.info(
@@ -379,6 +405,7 @@ def run_once() -> dict:
     ep = {
         "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
         "investable": investable,
+        "cash_ratio": cash_ratio,
         "expected_alpha_bps": expected_alpha_bps,
         "est_cost_bps": est_cost_bps,
         "net_edge_bps": net_edge_bps,
@@ -394,6 +421,7 @@ def run_once() -> dict:
         "orders_submitted": orders,
         "gate_reason": gate_reason,
         "onboarding_gate": onboarding_gate,
+        "planned_orders_count": len(planned_orders),
         "simulated": bool(getattr(trade_client, "is_simulated", False))
     }
     write_jsonl(C.EPISODES_PATH, ep)
