@@ -177,16 +177,24 @@ class SimTradingClient:
         equity = self._state.get("cash", 0.0)
         for pos in self.get_all_positions():
             equity += pos.market_value
-        return SimpleNamespace(equity=equity, cash=self._state.get("cash", 0.0))
+        return SimpleNamespace(equity=equity, cash=self._state.get("cash", 0.0), portfolio_value=equity)
 
     def submit_order(self, request) -> SimpleNamespace:
         symbol = request.symbol
-        qty = float(request.qty)
+        qty_attr = getattr(request, "qty", None)
+        notional = getattr(request, "notional", None)
         side = "buy" if str(request.side).lower().startswith("buy") else "sell"
         limit_price = getattr(request, "limit_price", None)
         price = float(limit_price) if limit_price else self._price(symbol)
         if price <= 0:
             price = max(1.0, self._price(symbol, 100.0))
+        if qty_attr is None or float(qty_attr or 0.0) <= 0:
+            if notional is not None:
+                qty = float(notional) / price if price else 0.0
+            else:
+                qty = 0.0
+        else:
+            qty = float(qty_attr)
         qty_signed = qty if side == "buy" else -qty
         self._apply_fill(symbol, qty_signed, price)
         order_id = self._next_id()
@@ -201,6 +209,9 @@ class SimTradingClient:
         self._orders[order_id] = order
         self._save_state()
         return SimpleNamespace(id=order_id, status="filled", filled_qty=qty)
+
+    def get_asset(self, symbol: str) -> SimpleNamespace:
+        return SimpleNamespace(symbol=symbol, fractionable=True)
 
     def _apply_fill(self, symbol: str, qty_signed: float, price: float) -> None:
         positions = self._state.setdefault("positions", {})
