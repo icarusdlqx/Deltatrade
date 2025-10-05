@@ -69,63 +69,112 @@ def build_order_plans(targets: Dict[str,float], current_mv: Dict[str,float],
         plans.append(OrderPlan(symbol=s, side=side, qty=qty_total, limit_price=limit, slices=slices))
     return plans
 
+
+def _asset_is_fractionable(client: TradingClient, symbol: str, cache: Dict[str, bool]) -> bool:
+    if symbol in cache:
+        return cache[symbol]
+    getter = getattr(client, "get_asset", None)
+    if getter is None:
+        cache[symbol] = False
+        return False
+    try:
+        asset = getter(symbol)
+        frac = bool(getattr(asset, "fractionable", True))
+    except Exception:
+        frac = True
+    cache[symbol] = frac
+    return frac
+
+
+def _round_order_qty(qty: float, fractionable: bool) -> float:
+    qty = float(qty)
+    if qty <= 0:
+        return 0.0
+    if fractionable:
+        return max(0.0001, round(qty, 4))
+    return float(max(0, math.floor(qty)))
+
 def place_orders_with_limits(client: TradingClient, plans: List[OrderPlan],
                              last_prices: Dict[str,float], peg_bps: int,
                              tif: TimeInForce = TimeInForce.DAY, fill_timeout_sec: int = 20) -> List[str]:
     order_ids: List[str] = []
+    fractionable_cache: Dict[str, bool] = {}
     for p in plans:
         lp = last_prices[p.symbol]
         bump = (peg_bps/10000.0) * lp
         limit_anchor = p.limit_price if p.limit_price is not None else lp
         limit = (limit_anchor + bump) if p.side == "buy" else (limit_anchor - bump)
-        qround = lambda q: max(0.0001, round(q, 4))
-        limround = lambda x: round(x, 4)
+        fractionable = _asset_is_fractionable(client, p.symbol, fractionable_cache)
 
         qty_total = max(0.0, p.qty)
         if qty_total <= 0:
             continue
         slices = max(1, p.slices)
-        qty_base = qty_total / slices
-        qty_sent = 0.0
+        qty_remaining = qty_total
 
         for i in range(slices):
-            qty_slice = qty_base
-            if i == slices - 1:
-                qty_slice = max(0.0, qty_total - qty_sent)
-            qty_slice = max(0.0001, qty_slice)
+            if qty_remaining <= 0:
+                break
+            slices_left = max(1, slices - i)
+            qty_target = qty_remaining / slices_left
+            qty_slice = _round_order_qty(qty_target, fractionable)
+            if qty_slice <= 0:
+                if not fractionable:
+                    break
+                continue
             try:
                 req = LimitOrderRequest(
                     symbol=p.symbol,
-                    qty=qround(qty_slice),
+                    qty=qty_slice,
                     side=OrderSide.BUY if p.side == "buy" else OrderSide.SELL,
                     time_in_force=tif,
-                    limit_price=limround(limit)
+                    limit_price=round(limit, 4)
                 )
                 o = client.submit_order(req)
                 order_ids.append(o.id)
-                qty_sent += qty_slice
                 filled_qty = _await_limit_fill(client, o.id, qty_slice, fill_timeout_sec)
-                remaining = max(0.0, qty_slice - filled_qty)
+                qty_filled = min(qty_slice, filled_qty)
+                qty_remaining = max(0.0, qty_remaining - qty_filled)
+                remaining = max(0.0, qty_slice - qty_filled)
                 if remaining > 1e-4:
                     _cancel_if_possible(client, o.id)
-                    fallback = _submit_market(client, p.symbol, remaining, p.side, tif, qround)
+                    fallback = _submit_market(client, p.symbol, remaining, p.side, tif, fractionable, lp)
                     if fallback:
                         order_ids.append(fallback)
+                        qty_remaining = max(0.0, qty_remaining - remaining)
             except Exception:
-                fallback = _submit_market(client, p.symbol, qty_slice, p.side, tif, qround)
+                fallback = _submit_market(client, p.symbol, qty_slice, p.side, tif, fractionable, lp)
                 if fallback:
                     order_ids.append(fallback)
+                    qty_remaining = max(0.0, qty_remaining - qty_slice)
             time.sleep(0.25)
     return order_ids
 
 
 def _submit_market(client: TradingClient, symbol: str, qty: float, side: str,
-                   tif: TimeInForce, qround) -> str | None:
+                   tif: TimeInForce, fractionable: bool, last_price: float) -> str | None:
+    side_enum = OrderSide.BUY if side == "buy" else OrderSide.SELL
+    if fractionable and last_price and last_price > 0:
+        notional = round(max(1.0, last_price * qty), 2)
+        try:
+            req = MarketOrderRequest(
+                symbol=symbol,
+                notional=notional,
+                side=side_enum,
+                time_in_force=tif,
+            )
+            o = client.submit_order(req)
+            return o.id
+        except Exception:
+            pass
+    qty_adj = _round_order_qty(qty, fractionable)
+    if qty_adj <= 0:
+        return None
     try:
         req = MarketOrderRequest(
             symbol=symbol,
-            qty=qround(qty),
-            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            qty=qty_adj,
+            side=side_enum,
             time_in_force=tif,
         )
         o = client.submit_order(req)

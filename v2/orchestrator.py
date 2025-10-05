@@ -19,8 +19,10 @@ from .news import fetch_news_map
 from .agents import score_events_for_symbols, risk_officer_check
 from .optimizer import solve_weights, scale_to_target_vol
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
+from .universe import build_universe, load_top50_etfs
 
 logger = logging.getLogger(__name__)
+log = logger
 
 def _alpaca_clients():
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -39,18 +41,14 @@ def _alpaca_clients():
     return StockHistoricalDataClient(api_key, api_sec), TradingClient(api_key, api_sec, paper=paper), api_key, api_sec
 
 def _universe(cfg) -> List[str]:
-    if cfg.UNIVERSE_MODE == "etfs_only":
-        return ["SPY","QQQ","IWM","DIA","XLK","XLF","XLY","XLP","XLE","XLV","XLI","XLB","XLU","XLRE","SMH","SOXX","HYG","TLT","IEF"]
-    # If you drop a data/sp500.csv with header Symbol, use it
-    try:
-        df = pd.read_csv("data/sp500.csv")
-        syms = df["Symbol"].astype(str).str.upper().tolist()
-        syms = list(dict.fromkeys(syms + ["SPY","QQQ","IWM","DIA","SMH","XLK","XLF","XLY"]))
-    except Exception:
-        syms = ["SPY","QQQ","IWM","DIA","SMH","XLK","XLF","XLY"]
-    if cfg.UNIVERSE_MAX and len(syms) > cfg.UNIVERSE_MAX:
-        return syms[:cfg.UNIVERSE_MAX]
-    return syms
+    mode = str(getattr(cfg, "UNIVERSE_MODE", "") or "").lower()
+    if mode == "etfs_only":
+        symbols = load_top50_etfs()
+    else:
+        symbols = build_universe()
+    if getattr(cfg, "UNIVERSE_MAX", None) and len(symbols) > cfg.UNIVERSE_MAX:
+        return symbols[:cfg.UNIVERSE_MAX]
+    return symbols
 
 def _fetch_bars(client: StockHistoricalDataClient, symbols: List[str], days: int) -> Dict[str, pd.DataFrame]:
     try:
@@ -119,6 +117,7 @@ def _estimate_adv(bars: Dict[str,pd.DataFrame]) -> Dict[str,float]:
 def run_once() -> dict:
     data_client, trade_client, api_key, api_sec = _alpaca_clients()
     cfg = get_cfg()
+    state = read_json(C.STATE_PATH, default={"stops": {}})
 
     symbols = _universe(cfg)
     bars = _fetch_bars(data_client, symbols, cfg.DATA_LOOKBACK_DAYS)
@@ -202,18 +201,13 @@ def run_once() -> dict:
         w_scaled = w_opt
 
     # Targets
-    acct = trade_client.get_account()
-    equity = float(acct.equity)
+    account = trade_client.get_account()
+    equity = float(account.equity)
     investable = equity * (1 - float(cfg.CASH_BUFFER))
     targets = {s: float(w * investable) for s, w in zip(candidates, w_scaled)}
 
-    # Calculate cash ratio early for onboarding detection
-    try:
-        cash_balance = float(getattr(acct, "cash", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        cash_balance = 0.0
-    cash_ratio = cash_balance / equity if equity > 0 else 0.0
-    is_onboarding = cash_ratio >= 0.90
+    state["equity"] = equity
+    state["cash"] = float(getattr(account, "cash", 0.0) or 0.0)
 
     # Rebalance bands (skip for initial allocation from cash)
     cur_mv_all = {p.symbol: float(p.market_value) for p in trade_client.get_all_positions()}
@@ -280,11 +274,11 @@ def run_once() -> dict:
         )
         
         # Log onboarding scenario
-        if is_onboarding and len(planned_orders) > 0:
+        if len(planned_orders) > 0 and (state.get("cash", 0.0) / max(state.get("equity", 1.0), 1e-9) >= 0.90):
             logger.info(
                 "onboarding_detected",
                 extra={
-                    "cash_ratio": float(cash_ratio),
+                    "cash_ratio": float(state.get("cash", 0.0) / max(state.get("equity", 1.0), 1e-9)),
                     "planned_orders": len(planned_orders),
                     "targets_count": len(targets_banded),
                     "reason": "initial_allocation_from_cash"
@@ -292,46 +286,50 @@ def run_once() -> dict:
             )
 
     cost_bps = est_cost_bps
-    logger.info(
-        "gate_check",
-        extra={
+    try:
+        log.info("gate_check", extra={
             "order_count": len(planned_orders),
             "turnover_bps": float(turnover_bps),
             "cost_bps": float(cost_bps),
             "net_alpha_bps": float(net_alpha_bps),
             "min_notional": float(MIN_ORDER_NOTIONAL),
-            "min_net_bps": float(MIN_NET_BPS_TO_TRADE),
-            "cash_ratio": float(cash_ratio),
-            "is_onboarding": bool(is_onboarding),
-        },
-    )
+            "min_net_bps": float(MIN_NET_BPS_TO_TRADE)
+        })
+    except Exception:
+        pass
 
-    # Onboarding gate: allow initial allocation from all-cash even with low alpha
-    onboarding_gate = is_onboarding and (len(planned_orders) > 0 or len(targets_banded) > 0)
+    try:
+        equity_snap = float(account.portfolio_value)
+        cash_snap = float(account.cash)
+    except Exception:
+        equity_snap = float(state.get("equity", 0.0))
+        cash_snap = float(state.get("cash", 0.0))
 
-    proceed = True
+    cash_frac = cash_snap / max(equity_snap, 1e-9)
+    force_onboard = (cash_frac >= 0.90) and (len(planned_orders) > 0)
+
+    passes_net_bps = (('net_alpha_bps' not in locals()) or (float(net_alpha_bps) >= float(MIN_NET_BPS_TO_TRADE)))
+    proceed = (len(planned_orders) > 0) and (passes_net_bps or force_onboard)
+
+    if force_onboard:
+        log.info("onboarding", extra={"cash_frac": cash_frac, "reason": "initial allocation from cash"})
+
     gate_reason = None
-    if not targets_banded:
-        proceed = False
-        gate_reason = "no_targets"
-    elif len(planned_orders) == 0 and not onboarding_gate:
-        proceed = False
-        gate_reason = "no_planned_orders"
-    elif turnover_cap > 0 and turnover_total > turnover_cap:
+    if len(planned_orders) == 0:
+        gate_reason = "no_targets" if not targets_banded else "no_planned_orders"
+    elif not passes_net_bps and not force_onboard:
+        gate_reason = "net_bps_below_min"
+
+    if proceed and turnover_cap > 0 and turnover_total > turnover_cap:
         proceed = False
         gate_reason = "turnover_cap"
-    elif bool(cfg.ENABLE_COST_GATE) and not onboarding_gate:
+    if proceed and bool(cfg.ENABLE_COST_GATE) and not force_onboard:
         if net_alpha_bps < MIN_NET_BPS_TO_TRADE:
             proceed = False
             gate_reason = "net_bps_below_min"
         elif expected_alpha_bps <= est_cost_bps:
             proceed = False
             gate_reason = "alpha_not_covering_cost"
-    
-    # Override: Allow onboarding even with low alpha if we have targets
-    if onboarding_gate and targets_banded:
-        proceed = True
-        gate_reason = "onboarding_override"
 
     if not proceed:
         logger.info(
@@ -342,9 +340,12 @@ def run_once() -> dict:
                 "cost_bps": float(cost_bps),
                 "net_alpha_bps": float(net_alpha_bps),
                 "gate_reason": gate_reason,
-                "onboarding_override": onboarding_gate,
+                "onboarding_override": force_onboard,
             },
         )
+
+    cash_ratio = cash_frac
+    onboarding_gate = force_onboard
 
     # Risk officer
     proposed_w = {s: (targets_banded.get(s, 0.0) / max(1.0, investable)) for s in candidates}
@@ -371,7 +372,6 @@ def run_once() -> dict:
             orders = order_ids
 
     # Stops/time exits (stored only)
-    state = read_json(C.STATE_PATH, default={"stops":{}})
     stops = state.get("stops", {})
     for s, tgt in targets.items():
         px = prices.get(s, 0.0)
@@ -385,7 +385,10 @@ def run_once() -> dict:
             stop = px - float(cfg.ATR_STOP_MULT) * atr
             take = px + float(cfg.TAKE_PROFIT_ATR) * atr
             stops[s] = {"stop": stop, "take": take, "placed_at": str(datetime.now(pytz.timezone("US/Eastern"))), "ttl_days": int(cfg.TIME_STOP_DAYS)}
-    write_json(C.STATE_PATH, {"stops": stops})
+    state["stops"] = stops
+    state["equity"] = equity
+    state["cash"] = float(getattr(account, "cash", 0.0) or cash_snap)
+    write_json(C.STATE_PATH, state)
 
     net_edge_bps = expected_alpha_bps - est_cost_bps
     top_changes = sorted(rebalance_deltas.items(), key=lambda kv: abs(kv[1]["delta"]), reverse=True)[:3]
