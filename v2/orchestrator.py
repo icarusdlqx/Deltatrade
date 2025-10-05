@@ -12,6 +12,12 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.trading.client import TradingClient
 
 from . import config as C
+from .config import (
+    COST_BPS_PER_1PCT_TURNOVER,
+    MIN_NET_BPS_TO_TRADE as CONFIG_MIN_NET_BPS,
+    MIN_ORDER_NOTIONAL as CONFIG_MIN_ORDER_NOTIONAL,
+    VOL_TARGET_ANNUAL,
+)
 from .settings_bridge import get_cfg
 from .utils import write_jsonl, read_json, write_json
 from .features import compute_panel
@@ -200,6 +206,8 @@ def run_once() -> dict:
     else:
         w_scaled = w_opt
 
+    target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
+
     # Targets
     account = trade_client.get_account()
     equity = float(account.equity)
@@ -227,7 +235,6 @@ def run_once() -> dict:
     prices = {s: float(bars[s]["close"].iloc[-1]) for s in candidates if s in bars}
     adv = _estimate_adv(bars)
     expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_scaled)) * 10000.0
-    est_cost_bps = 0.0
     cost_breakdown = {}
     rebalance_deltas: Dict[str, Dict[str, float]] = {}
     investable_denom = max(1.0, investable)
@@ -240,10 +247,15 @@ def run_once() -> dict:
             "target": tgt,
             "delta": delta,
         }
-        per_order_bps = estimate_cost_bps(delta, prices.get(s, 0.0), adv.get(s, 1.0),
-                                          float(cfg.COST_SPREAD_BPS), float(cfg.COST_IMPACT_KAPPA), float(cfg.COST_IMPACT_PSI))
+        per_order_bps = estimate_cost_bps(
+            delta,
+            prices.get(s, 0.0),
+            adv.get(s, 1.0),
+            float(cfg.COST_SPREAD_BPS),
+            float(cfg.COST_IMPACT_KAPPA),
+            float(cfg.COST_IMPACT_PSI),
+        )
         turnover_share = abs(delta) / investable_denom
-        est_cost_bps += per_order_bps * turnover_share
         turnover_total += turnover_share
         cost_breakdown[s] = {
             "per_order_bps": per_order_bps,
@@ -252,10 +264,8 @@ def run_once() -> dict:
             "current_notional": cur,
             "target_notional": tgt,
         }
-    turnover_bps = turnover_total * 10000.0
-    net_alpha_bps = expected_alpha_bps - est_cost_bps
-    MIN_ORDER_NOTIONAL = float(cfg.MIN_ORDER_NOTIONAL)
-    MIN_NET_BPS_TO_TRADE = float(getattr(cfg, "MIN_NET_BPS_TO_TRADE", 0.0))
+    min_order_notional = float(getattr(cfg, "MIN_ORDER_NOTIONAL", CONFIG_MIN_ORDER_NOTIONAL))
+    min_net_bps_to_trade = float(getattr(cfg, "MIN_NET_BPS_TO_TRADE", CONFIG_MIN_NET_BPS))
     turnover_cap = float(getattr(cfg, "TURNOVER_CAP", 0.0) or 0.0)
 
     # Build order plans (always do this if we have targets, especially for onboarding)
@@ -266,13 +276,13 @@ def run_once() -> dict:
             cur_mv_all,
             prices,
             adv,
-            MIN_ORDER_NOTIONAL,
+            min_order_notional,
             int(cfg.MAX_SLICES),
             float(cfg.COST_SPREAD_BPS),
             float(cfg.COST_IMPACT_KAPPA),
             float(cfg.COST_IMPACT_PSI),
         )
-        
+
         # Log onboarding scenario
         if len(planned_orders) > 0 and (state.get("cash", 0.0) / max(state.get("equity", 1.0), 1e-9) >= 0.90):
             logger.info(
@@ -281,22 +291,9 @@ def run_once() -> dict:
                     "cash_ratio": float(state.get("cash", 0.0) / max(state.get("equity", 1.0), 1e-9)),
                     "planned_orders": len(planned_orders),
                     "targets_count": len(targets_banded),
-                    "reason": "initial_allocation_from_cash"
-                }
+                    "reason": "initial_allocation_from_cash",
+                },
             )
-
-    cost_bps = est_cost_bps
-    try:
-        log.info("gate_check", extra={
-            "order_count": len(planned_orders),
-            "turnover_bps": float(turnover_bps),
-            "cost_bps": float(cost_bps),
-            "net_alpha_bps": float(net_alpha_bps),
-            "min_notional": float(MIN_ORDER_NOTIONAL),
-            "min_net_bps": float(MIN_NET_BPS_TO_TRADE)
-        })
-    except Exception:
-        pass
 
     try:
         equity_snap = float(account.portfolio_value)
@@ -305,60 +302,112 @@ def run_once() -> dict:
         equity_snap = float(state.get("equity", 0.0))
         cash_snap = float(state.get("cash", 0.0))
 
+    est_turnover = 0.0
+    for od in planned_orders:
+        dollars = float(od.get("notional") or 0.0)
+        if (dollars <= 0.0) and ("qty" in od and "last_price" in od):
+            dollars = float(od.get("qty", 0.0)) * float(od.get("last_price", 0.0))
+        est_turnover += abs(dollars)
+    est_turnover = est_turnover / max(equity_snap, 1e-9)
+    turnover_pct = est_turnover * 100.0
+    cost_bps = 0.0 if len(planned_orders) == 0 else (turnover_pct * float(COST_BPS_PER_1PCT_TURNOVER))
+    expected_alpha_bps = locals().get("expected_alpha_bps", 0.0)
+    net_bps = expected_alpha_bps - cost_bps
+    est_cost_bps = cost_bps
+
     cash_frac = cash_snap / max(equity_snap, 1e-9)
     force_onboard = (cash_frac >= 0.90) and (len(planned_orders) > 0)
+    passes_net_bps = True
+    if len(planned_orders) > 0:
+        passes_net_bps = (net_bps >= min_net_bps_to_trade)
 
-    passes_net_bps = (('net_alpha_bps' not in locals()) or (float(net_alpha_bps) >= float(MIN_NET_BPS_TO_TRADE)))
-    proceed = (len(planned_orders) > 0) and (passes_net_bps or force_onboard)
+    proceed_gate = (len(planned_orders) > 0) and (passes_net_bps or force_onboard)
+
+    reasons: List[str] = []
+    if len(planned_orders) == 0:
+        reasons.append("no_orders")
+    else:
+        if not passes_net_bps:
+            reasons.append("net_below_min")
+        if force_onboard:
+            reasons.append("onboarding")
+        turnover_fraction = est_turnover if len(planned_orders) > 0 else turnover_total
+        if turnover_cap > 0 and turnover_fraction > turnover_cap:
+            proceed_gate = False
+            reasons.append("turnover_cap")
+        if bool(cfg.ENABLE_COST_GATE) and not force_onboard and expected_alpha_bps <= cost_bps:
+            if "net_below_min" not in reasons:
+                reasons.append("alpha_not_covering_cost")
+            proceed_gate = False
 
     if force_onboard:
         log.info("onboarding", extra={"cash_frac": cash_frac, "reason": "initial allocation from cash"})
-
-    gate_reason = None
-    if len(planned_orders) == 0:
-        gate_reason = "no_targets" if not targets_banded else "no_planned_orders"
-    elif not passes_net_bps and not force_onboard:
-        gate_reason = "net_bps_below_min"
-
-    if proceed and turnover_cap > 0 and turnover_total > turnover_cap:
-        proceed = False
-        gate_reason = "turnover_cap"
-    if proceed and bool(cfg.ENABLE_COST_GATE) and not force_onboard:
-        if net_alpha_bps < MIN_NET_BPS_TO_TRADE:
-            proceed = False
-            gate_reason = "net_bps_below_min"
-        elif expected_alpha_bps <= est_cost_bps:
-            proceed = False
-            gate_reason = "alpha_not_covering_cost"
-
-    if not proceed:
-        logger.info(
-            "gate_check_blocked",
-            extra={
-                "order_count": len(planned_orders),
-                "turnover_bps": float(turnover_bps),
-                "cost_bps": float(cost_bps),
-                "net_alpha_bps": float(net_alpha_bps),
-                "gate_reason": gate_reason,
-                "onboarding_override": force_onboard,
-            },
-        )
 
     cash_ratio = cash_frac
     onboarding_gate = force_onboard
 
     # Risk officer
     proposed_w = {s: (targets_banded.get(s, 0.0) / max(1.0, investable)) for s in candidates}
-    roc = risk_officer_check(proposed_w, {s: rev_sec.get(sector_ids[i], "UNKNOWN") for i, s in enumerate(candidates)},
-                             float(cfg.SECTOR_MAX), float(cfg.NAME_MAX))
+    roc = risk_officer_check(
+        proposed_w,
+        {s: rev_sec.get(sector_ids[i], "UNKNOWN") for i, s in enumerate(candidates)},
+        float(cfg.SECTOR_MAX),
+        float(cfg.NAME_MAX),
+    )
     risk_officer_verdict = {
         "approved": str(roc.get("approved", "false")).lower() == "true",
         "message": roc.get("message"),
         "payload": roc,
     }
+    risk_officer_approved = bool(risk_officer_verdict["approved"])
+    if proceed_gate and not risk_officer_approved:
+        reasons.append("risk_officer_blocked")
+
+    proceed_final = proceed_gate and risk_officer_approved
+
+    mode = "sim" if getattr(trade_client, "is_simulated", False) else (
+        "live" if os.environ.get("ALPACA_PAPER", "true").lower() == "false" else "paper"
+    )
+    model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or C.OPENAI_MODEL
+    effort = os.getenv("REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") or C.OPENAI_REASONING_EFFORT
+    regime = locals().get("regime_summary", {})
+    target_gross = sum(abs(w) for w in target_weights.values())
+    exposure = {"target_gross": float(target_gross), "vol_target": float(VOL_TARGET_ANNUAL)}
+
+    gate_reason = None
+    for r in reasons:
+        if r != "onboarding":
+            gate_reason = r
+            break
+
+    try:
+        log.info(
+            "gate_check",
+            extra={
+                "mode": mode,
+                "model": model_name,
+                "effort": effort,
+                "equity": float(equity_snap),
+                "cash": float(cash_snap),
+                "cash_frac": float(cash_frac),
+                "order_count": len(planned_orders),
+                "turnover_pct": float(turnover_pct),
+                "cost_bps": float(cost_bps),
+                "expected_alpha_bps": float(expected_alpha_bps),
+                "net_bps": float(net_bps),
+                "min_notional": float(min_order_notional),
+                "min_net_bps": float(min_net_bps_to_trade),
+                "proceed": bool(proceed_gate),
+                "reasons": reasons,
+                "exposure": exposure,
+                "regime": regime,
+            },
+        )
+    except Exception:
+        pass
 
     orders = []
-    if proceed and roc.get("approved") == "true" and planned_orders:
+    if proceed_final and planned_orders:
         if bool(cfg.DRY_RUN):
             orders = ["DRY_RUN_NO_ORDERS"]
         else:
@@ -390,14 +439,15 @@ def run_once() -> dict:
     state["cash"] = float(getattr(account, "cash", 0.0) or cash_snap)
     write_json(C.STATE_PATH, state)
 
-    net_edge_bps = expected_alpha_bps - est_cost_bps
+    net_edge_bps = net_bps
     top_changes = sorted(rebalance_deltas.items(), key=lambda kv: abs(kv[1]["delta"]), reverse=True)[:3]
     changes_summary = ", ".join(
         f"{sym}: {vals['delta']:+.0f}" for sym, vals in top_changes
     ) if top_changes else "no meaningful target adjustments"
     logger.info(
-        "Run summary (proceed=%s)\nExpected alpha: %.2f bps | Estimated cost: %.2f bps (net %.2f bps)\nTop target changes: %s\nRisk officer verdict: %s",
-        proceed,
+        "Run summary (gate=%s, final=%s)\nExpected alpha: %.2f bps | Estimated cost: %.2f bps (net %.2f bps)\nTop target changes: %s\nRisk officer verdict: %s",
+        proceed_gate,
+        proceed_final,
         expected_alpha_bps,
         est_cost_bps,
         net_edge_bps,
@@ -416,7 +466,7 @@ def run_once() -> dict:
         "alpha_breakdown": alpha_breakdown,
         "rebalance_deltas": rebalance_deltas,
         "rebalance_summary": changes_summary,
-        "proceed": proceed,
+        "proceed": proceed_final,
         "risk_officer": roc,
         "risk_officer_verdict": risk_officer_verdict,
         "top_symbols": candidates[: int(cfg.TARGET_POSITIONS)],
@@ -425,7 +475,30 @@ def run_once() -> dict:
         "gate_reason": gate_reason,
         "onboarding_gate": onboarding_gate,
         "planned_orders_count": len(planned_orders),
-        "simulated": bool(getattr(trade_client, "is_simulated", False))
+        "simulated": bool(getattr(trade_client, "is_simulated", False)),
+        "gate": {
+            "mode": mode,
+            "model": model_name,
+            "effort": effort,
+            "equity": float(equity_snap),
+            "cash": float(cash_snap),
+            "cash_frac": float(cash_frac),
+            "order_count": len(planned_orders),
+            "turnover_pct": float(turnover_pct),
+            "cost_bps": float(cost_bps),
+            "expected_alpha_bps": float(expected_alpha_bps),
+            "net_bps": float(net_bps),
+            "min_notional": float(min_order_notional),
+            "min_net_bps": float(min_net_bps_to_trade),
+            "proceed": bool(proceed_gate),
+            "passes_net_bps": bool(passes_net_bps),
+            "force_onboard": bool(force_onboard),
+            "risk_officer_approved": bool(risk_officer_approved),
+            "reasons": list(reasons),
+            "reason_primary": gate_reason,
+            "exposure": exposure,
+            "regime": regime,
+        }
     }
     write_jsonl(C.EPISODES_PATH, ep)
     return ep

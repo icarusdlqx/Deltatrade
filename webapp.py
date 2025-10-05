@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import logging
 import gevent
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import pytz
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
 from alpaca.trading.client import TradingClient
 
+from v2.config import MAX_LOG_ROWS
 from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
 
@@ -55,22 +58,143 @@ def _environment_summary() -> Dict[str, Any]:
     }
 
 
-def _load_episodes(path: str, limit: int = 200) -> List[Dict[str, Any]]:
+def _load_episodes(path: str, limit: int = 200, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
     episodes: List[Dict[str, Any]] = []
     p = Path(path)
     if not p.exists():
-        return episodes
+        return episodes, 0
     try:
         lines = p.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return episodes
-    for line in lines[-limit:]:
+        return episodes, 0
+    total = len(lines)
+    if limit <= 0:
+        limit = total
+    offset = max(offset, 0)
+    start = max(total - offset - limit, 0)
+    end = max(total - offset, 0)
+    subset = lines[start:end]
+    for line in subset:
         try:
             episodes.append(json.loads(line))
         except Exception:
             continue
     episodes.reverse()
-    return episodes
+    return episodes, total
+
+
+def _next_run_time(cfg) -> datetime | None:
+    windows = getattr(cfg, "TRADING_WINDOWS_ET", []) or []
+    if not windows:
+        return None
+    tz = pytz.timezone("US/Eastern")
+    now = datetime.now(tz)
+    upcoming: List[datetime] = []
+    for win in windows:
+        try:
+            hour_str, minute_str = str(win).split(":", 1)
+            hour, minute = int(hour_str), int(minute_str)
+        except Exception:
+            continue
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        upcoming.append(candidate)
+    if not upcoming:
+        return None
+    return min(upcoming)
+
+
+def _format_next_run(dt: datetime | None) -> str:
+    if not dt:
+        return "No run scheduled"
+    return dt.strftime("%a %b %d · %I:%M %p ET")
+
+
+def _mode_label(mode_code: str | None) -> str:
+    if not mode_code:
+        return "Unknown"
+    mode_code = str(mode_code).lower()
+    if mode_code in ("live", "realtime"):
+        return "Live"
+    if mode_code in ("sim", "simulated"):
+        return "Simulated"
+    return "Paper"
+
+
+def _portfolio_snapshot_from_episode(latest: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not latest:
+        return {"equity": 0.0, "cash": 0.0, "cash_pct": 0.0, "positions": 0, "target_gross": 0.0}
+    gate = latest.get("gate", {}) or {}
+    equity = float(gate.get("equity") or latest.get("investable", 0.0))
+    cash = float(gate.get("cash") or 0.0)
+    cash_frac = float(gate.get("cash_frac") or 0.0)
+    positions = len(latest.get("targets", {}) or {})
+    target_gross = float(((gate.get("exposure") or {}).get("target_gross")) or 0.0)
+    return {
+        "equity": equity,
+        "cash": cash,
+        "cash_pct": cash_frac * 100.0,
+        "positions": positions,
+        "target_gross": target_gross,
+    }
+
+
+def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not latest:
+        return {
+            "summary": "No runs recorded yet.",
+            "net_bps": 0.0,
+            "cost_bps": 0.0,
+            "expected_bps": 0.0,
+            "turnover_pct": 0.0,
+            "order_count": 0,
+            "reasons": [],
+            "traded": False,
+            "proceed_gate": False,
+            "actual_orders": 0,
+        }
+    gate = latest.get("gate", {}) or {}
+    expected = float(gate.get("expected_alpha_bps") or latest.get("expected_alpha_bps", 0.0) or 0.0)
+    cost = float(gate.get("cost_bps") or latest.get("est_cost_bps", 0.0) or 0.0)
+    net = float(gate.get("net_bps") or latest.get("net_edge_bps", 0.0) or 0.0)
+    turnover_pct = float(gate.get("turnover_pct") or 0.0)
+    order_count = int(gate.get("order_count") or latest.get("planned_orders_count", 0) or 0)
+    reasons_raw = gate.get("reasons") or []
+    if isinstance(reasons_raw, list):
+        reasons = [str(r) for r in reasons_raw if r]
+    elif reasons_raw:
+        reasons = [str(reasons_raw)]
+    else:
+        reasons = []
+    proceed_gate = bool(gate.get("proceed"))
+    orders_submitted = latest.get("orders_submitted") or []
+    if isinstance(orders_submitted, list):
+        actual_orders = [oid for oid in orders_submitted if oid != "DRY_RUN_NO_ORDERS"]
+    else:
+        actual_orders = []
+    traded = len(actual_orders) > 0
+    if traded:
+        summary = "Traded {count} orders · net {net:.1f} bps after {cost:.1f} bps costs · turnover {turnover:.1f}%".format(
+            count=len(actual_orders), net=net, cost=cost, turnover=turnover_pct
+        )
+    else:
+        reason_text = ", ".join(reasons) if reasons else "none"
+        summary = (
+            "Skipped — reasons: {reasons}; gate math: exp {expected:.1f} bps, cost {cost:.1f} bps, net {net:.1f} bps"
+        ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
+    return {
+        "summary": summary,
+        "net_bps": net,
+        "cost_bps": cost,
+        "expected_bps": expected,
+        "turnover_pct": turnover_pct,
+        "order_count": order_count,
+        "reasons": reasons,
+        "traded": traded,
+        "proceed_gate": proceed_gate,
+        "actual_orders": len(actual_orders),
+    }
 
 
 def _dashboard_metrics(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -163,12 +287,37 @@ def root():
 @app.route("/dashboard")
 def dashboard():
     cfg = get_cfg()
-    episodes = _load_episodes(cfg.EPISODES_PATH, limit=120)
+    episodes, _ = _load_episodes(cfg.EPISODES_PATH, limit=120)
     latest = episodes[0] if episodes else None
     env = _environment_summary()
     metrics = _dashboard_metrics(episodes)
-    return render_template("dashboard.html", cfg=cfg, episodes=episodes[:5], latest=latest,
-                           env=env, metrics=metrics, active_page="dashboard")
+    next_run_dt = _next_run_time(cfg)
+    next_run_label = _format_next_run(next_run_dt) if next_run_dt else "No run scheduled"
+    env_mode_code = "live" if not env.get("paper", True) else ("sim" if env.get("simulated") else "paper")
+    gate_mode = (latest.get("gate", {}).get("mode") if latest else None) or None
+    mode_code = gate_mode or env_mode_code
+    status = {
+        "mode": mode_code,
+        "mode_label": _mode_label(mode_code),
+        "enabled": bool(getattr(cfg, "AUTOMATION_ENABLED", False)),
+        "next_run": next_run_label,
+        "model": (latest.get("gate", {}).get("model") if latest else None) or (os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or getattr(cfg, "OPENAI_MODEL", "")),
+        "effort": (latest.get("gate", {}).get("effort") if latest else None) or (os.getenv("REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") or getattr(cfg, "OPENAI_REASONING_EFFORT", "")),
+    }
+    portfolio_snapshot = _portfolio_snapshot_from_episode(latest)
+    last_run_summary = _summarize_last_run(latest)
+    return render_template(
+        "dashboard.html",
+        cfg=cfg,
+        episodes=episodes[:5],
+        latest=latest,
+        env=env,
+        metrics=metrics,
+        status=status,
+        portfolio_snapshot=portfolio_snapshot,
+        last_run=last_run_summary,
+        active_page="dashboard",
+    )
 
 
 @app.route("/positions")
@@ -181,15 +330,98 @@ def positions():
 @app.route("/log")
 def log():
     cfg = get_cfg()
-    episodes = _load_episodes(cfg.EPISODES_PATH, limit=300)
+    limit = int(request.args.get("limit", MAX_LOG_ROWS))
+    limit = max(1, min(limit, MAX_LOG_ROWS))
+    page = max(int(request.args.get("page", 1) or 1), 1)
+    offset = (page - 1) * limit
+    episodes, total = _load_episodes(cfg.EPISODES_PATH, limit=limit, offset=offset)
+    has_more = (offset + len(episodes)) < total
+    start_index = offset + 1 if episodes else 0
+    end_index = offset + len(episodes)
+    total_pages = (total + limit - 1) // limit if total else 0
     env = _environment_summary()
-    return render_template("log.html", episodes=episodes, active_page="log", env=env)
+    return render_template(
+        "log.html",
+        episodes=episodes,
+        active_page="log",
+        env=env,
+        limit=limit,
+        page=page,
+        total=total,
+        has_more=has_more,
+        start_index=start_index,
+        end_index=end_index,
+        total_pages=total_pages,
+    )
+
+
+@app.route("/log.csv")
+def log_csv():
+    cfg = get_cfg()
+    episodes, _ = _load_episodes(cfg.EPISODES_PATH, limit=MAX_LOG_ROWS)
+    output = io.StringIO()
+    fieldnames = [
+        "timestamp",
+        "mode",
+        "model",
+        "effort",
+        "equity",
+        "cash",
+        "cash_frac",
+        "order_count",
+        "turnover_pct",
+        "expected_alpha_bps",
+        "cost_bps",
+        "net_bps",
+        "min_net_bps",
+        "proceed_gate",
+        "force_onboard",
+        "passes_net_bps",
+        "risk_officer_approved",
+        "proceed_final",
+        "reasons",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for ep in episodes:
+        gate = ep.get("gate", {}) or {}
+        reasons_raw = gate.get("reasons") or ep.get("gate_reason") or []
+        if isinstance(reasons_raw, list):
+            reasons_str = ";".join(str(r) for r in reasons_raw if r)
+        elif reasons_raw:
+            reasons_str = str(reasons_raw)
+        else:
+            reasons_str = ""
+        writer.writerow({
+            "timestamp": ep.get("as_of", ""),
+            "mode": gate.get("mode"),
+            "model": gate.get("model"),
+            "effort": gate.get("effort"),
+            "equity": gate.get("equity"),
+            "cash": gate.get("cash"),
+            "cash_frac": gate.get("cash_frac"),
+            "order_count": gate.get("order_count", ep.get("planned_orders_count", 0)),
+            "turnover_pct": gate.get("turnover_pct"),
+            "expected_alpha_bps": gate.get("expected_alpha_bps", ep.get("expected_alpha_bps", 0.0)),
+            "cost_bps": gate.get("cost_bps", ep.get("est_cost_bps", 0.0)),
+            "net_bps": gate.get("net_bps", ep.get("net_edge_bps", 0.0)),
+            "min_net_bps": gate.get("min_net_bps"),
+            "proceed_gate": gate.get("proceed"),
+            "force_onboard": gate.get("force_onboard"),
+            "passes_net_bps": gate.get("passes_net_bps"),
+            "risk_officer_approved": gate.get("risk_officer_approved"),
+            "proceed_final": ep.get("proceed"),
+            "reasons": reasons_str,
+        })
+    response = Response(output.getvalue(), mimetype="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=log.csv"
+    return response
 
 
 @app.route("/performance")
 def performance():
     cfg = get_cfg()
-    episodes = _load_episodes(cfg.EPISODES_PATH, limit=180)
+    episodes, _ = _load_episodes(cfg.EPISODES_PATH, limit=180)
     series = _performance_series(episodes)
     metrics = _dashboard_metrics(episodes)
     env = _environment_summary()

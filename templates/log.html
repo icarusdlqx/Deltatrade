@@ -5,70 +5,115 @@
 
 {% block content %}
 <div class="card card-surface p-4">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-3">
     <div>
       <h5 class="fw-semibold mb-1">Episodes history</h5>
-      <p class="text-muted small mb-0">Showing the {{ episodes|length }} most recent runs.</p>
+      <p class="text-muted small mb-0">
+        Page {{ page }}{% if total_pages %} / {{ total_pages }}{% endif %} · showing {{ episodes|length }} runs ({{ start_index }}–{{ end_index }} of {{ total }})
+      </p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('log_csv') }}">
+        <i class="bi bi-download"></i>
+        Export CSV
+      </a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    </div>
   </div>
   <div class="table-responsive">
     <table class="table table-modern table-striped align-middle">
       <thead class="text-uppercase small text-muted">
         <tr>
           <th style="min-width: 180px;">As of</th>
+          <th>Mode</th>
           <th class="text-center">Proceed</th>
+          <th class="text-end">Orders</th>
+          <th class="text-end">Turnover %</th>
           <th class="text-end">Expected α (bps)</th>
           <th class="text-end">Costs (bps)</th>
           <th class="text-end">Net (bps)</th>
-          <th>Orders</th>
-          <th style="min-width: 200px;">Notes</th>
+          <th class="text-end">Equity</th>
+          <th class="text-end">Cash %</th>
+          <th style="min-width: 200px;">Reasons</th>
         </tr>
       </thead>
       <tbody>
         {% for ep in episodes %}
+        {% set gate = ep.get('gate', {}) or {} %}
+        {% set mode_code = gate.get('mode', 'paper') %}
+        {% if mode_code in ['live', 'realtime'] %}
+          {% set mode_label = 'Live' %}
+        {% elif mode_code in ['sim', 'simulated'] %}
+          {% set mode_label = 'Simulated' %}
+        {% else %}
+          {% set mode_label = 'Paper' %}
+        {% endif %}
+        {% set expected = gate.get('expected_alpha_bps', ep.get('expected_alpha_bps', 0)) | float %}
+        {% set cost = gate.get('cost_bps', ep.get('est_cost_bps', 0)) | float %}
+        {% set net = gate.get('net_bps', ep.get('net_edge_bps', 0)) | float %}
+        {% set turnover = gate.get('turnover_pct', 0) | float %}
+        {% set cash_frac = gate.get('cash_frac', 0) | float %}
+        {% set equity = gate.get('equity', 0) | float %}
+        {% set order_count = gate.get('order_count', ep.get('planned_orders_count', 0)) %}
+        {% set reasons_list = gate.get('reasons') if gate.get('reasons') else [] %}
+        {% if not reasons_list and ep.gate_reason %}
+          {% set reasons_list = [ep.gate_reason] %}
+        {% endif %}
+        {% set orders_submitted = ep.orders_submitted or [] %}
+        {% set traded = orders_submitted and orders_submitted[0] != 'DRY_RUN_NO_ORDERS' %}
+        {% set net_class = 'text-success' if net > 0 else ('text-danger' if net < 0 else '') %}
         <tr>
           <td>{{ ep.as_of }}</td>
+          <td>{{ mode_label }}</td>
           <td class="text-center">
-            {% if ep.proceed %}
-            <span class="status-pill"><i class="bi bi-check-circle"></i>Yes</span>
+            {% if gate.get('proceed') %}
+            <span class="status-pill"><i class="bi bi-check-circle"></i>Go</span>
             {% else %}
-            <span class="status-pill negative"><i class="bi bi-x-circle"></i>No</span>
+            <span class="status-pill negative"><i class="bi bi-x-circle"></i>Hold</span>
             {% endif %}
+            <div class="small text-muted mt-1">
+              {% if traded %}
+                Orders sent
+              {% elif ep.proceed %}
+                Proceeded
+              {% else %}
+                Skipped
+              {% endif %}
+            </div>
           </td>
-          <td class="text-end">{{ '%.2f'|format(ep.expected_alpha_bps|default(0)) }}</td>
-          <td class="text-end">{{ '%.2f'|format(ep.est_cost_bps|default(0)) }}</td>
-          <td class="text-end">{{ '%.2f'|format(ep.net_edge_bps|default(0)) }}</td>
-          <td>
-            {% if ep.orders_submitted %}
-              {{ ep.orders_submitted|length }} ids
+          <td class="text-end">{{ order_count }}</td>
+          <td class="text-end">{{ '%.1f'|format(turnover) }}%</td>
+          <td class="text-end">{{ '%.1f'|format(expected) }}</td>
+          <td class="text-end">{{ '%.1f'|format(cost) }}</td>
+          <td class="text-end"><span class="{{ net_class }}">{{ '%.1f'|format(net) }}</span></td>
+          <td class="text-end">{{ "${:,.0f}".format(equity) }}</td>
+          <td class="text-end">{{ '%.1f'|format(cash_frac * 100) }}%</td>
+          <td class="small">
+            {% if reasons_list %}
+              {{ reasons_list|join(', ') }}
             {% else %}
-              —
+              <span class="text-muted">—</span>
             {% endif %}
-          </td>
-          <td class="text-muted small">
-            {% set verdict = ep.get('risk_officer_verdict', {}) %}
-            {% set risk = ep.get('risk_officer', {}) %}
-            {% set note = verdict.message or risk.get('message') %}
-            {% if note %}
-              {{ note }}
-            {% elif verdict.approved %}
-              Risk officer: approved
-            {% elif risk.approved %}
-              Risk officer: {{ risk.approved }}
-            {% else %}
-              —
-            {% endif %}
-            {% if ep.rebalance_summary %}<br><span class="text-body">Δ {{ ep.rebalance_summary }}</span>{% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="7" class="text-center text-muted py-4">No runs recorded yet.</td>
+          <td colspan="11" class="text-center text-muted py-4">No runs recorded yet.</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+  </div>
+  <div class="d-flex justify-content-between align-items-center mt-3">
+    <div class="text-muted small">Page {{ page }}{% if total_pages %} / {{ total_pages }}{% endif %}</div>
+    <div class="d-flex gap-2">
+      {% if page > 1 %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('log', page=page-1, limit=limit) }}">Previous</a>
+      {% endif %}
+      {% if has_more %}
+        <a class="btn btn-primary" href="{{ url_for('log', page=page+1, limit=limit) }}">Load more</a>
+      {% endif %}
+    </div>
   </div>
 </div>
 {% endblock %}
