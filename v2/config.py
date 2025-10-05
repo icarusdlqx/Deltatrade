@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 # ===== Canonical defaults =====
 
 # Automation & windows
@@ -35,7 +37,7 @@ MAX_WEIGHT_PER_NAME = 0.20
 TURNOVER_CAP = 0.35
 TARGET_POSITIONS = MAX_POSITIONS
 NAME_MAX = MAX_WEIGHT_PER_NAME
-VOL_TARGET_ANNUAL = 0.14
+VOL_TARGET_ANNUAL = float(os.getenv("VOL_TARGET_ANNUAL", "0.14"))
 TARGET_PORTFOLIO_VOL = VOL_TARGET_ANNUAL
 LAMBDA_RISK = 8.0
 TURNOVER_PENALTY = 0.0005
@@ -50,21 +52,22 @@ SLEEVE_WEIGHTS = {"xsec": 0.60, "event": 0.40}
 # Execution & costs
 ENABLE_COST_GATE = True
 DRY_RUN = False
-MIN_ORDER_NOTIONAL = 10.0
+MIN_ORDER_NOTIONAL = float(os.getenv("MIN_ORDER_NOTIONAL", "10"))
 MAX_SLICES = 5
 LIMIT_SLIP_BP = 10
 COST_SPREAD_BPS = 5.0
 COST_IMPACT_KAPPA = 0.10
 COST_IMPACT_PSI = 0.5
 FILL_TIMEOUT_SEC = 20
-MIN_NET_BPS_TO_TRADE = 0.0
+MIN_NET_BPS_TO_TRADE = float(os.getenv("MIN_NET_BPS_TO_TRADE", "0"))
 
 # Stops / TTL (stored; not auto-placed)
 ATR_STOP_MULT = 2.5
 TAKE_PROFIT_ATR = 2.0
 TIME_STOP_DAYS = 10
 
-# Paths
+# Paths & logging
+MAX_LOG_ROWS = int(os.getenv("MAX_LOG_ROWS", "5000"))
 EPISODES_PATH = "data/episodes_v2.jsonl"
 STATE_PATH = "data/state.json"
 SETTINGS_OVERRIDES_PATH = "data/settings_overrides.json"
@@ -72,3 +75,6 @@ SETTINGS_OVERRIDES_PATH = "data/settings_overrides.json"
 # API & model
 OPENAI_MODEL = "gpt-5"
 OPENAI_REASONING_EFFORT = "medium"
+
+# Execution cost heuristic
+COST_BPS_PER_1PCT_TURNOVER = float(os.getenv("COST_BPS_PER_1PCT_TURNOVER", "3.0"))
