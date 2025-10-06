@@ -34,6 +34,14 @@ waitForPort = 5000
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 33023
+externalPort = 3001
+
+[[ports]]
+localPort = 45555
+externalPort = 3000
+
 [deployment]
 deploymentTarget = "vm"
 run = ["bash", "-c", "python scheduler.py & exec gunicorn -k gevent --bind=0.0.0.0:5000 --reuse-port webapp:app"]
