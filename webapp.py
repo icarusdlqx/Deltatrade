@@ -197,23 +197,24 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     }
 
 
-def _dashboard_metrics(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _dashboard_metrics(episodes: List[Dict[str, Any]], total_count: int | None = None) -> Dict[str, Any]:
     if not episodes:
         return {
-            "total_runs": 0,
+            "total_runs": total_count or 0,
             "proceed_rate": 0,
             "avg_expected": 0,
             "avg_cost": 0,
             "net_edge": 0,
         }
-    total_runs = len(episodes)
+    # Use actual total count from file, not len(episodes) which may be limited
+    total_runs = total_count if total_count is not None else len(episodes)
     proceed = sum(1 for ep in episodes if ep.get("proceed"))
     expected_vals = [float(ep.get("expected_alpha_bps", 0.0)) for ep in episodes]
     cost_vals = [float(ep.get("est_cost_bps", 0.0)) for ep in episodes]
     net_edge = sum(e - c for e, c in zip(expected_vals, cost_vals)) / 10000.0
     return {
         "total_runs": total_runs,
-        "proceed_rate": int(round(100 * proceed / total_runs)) if total_runs else 0,
+        "proceed_rate": int(round(100 * proceed / len(episodes))) if episodes else 0,
         "avg_expected": round(mean(expected_vals), 2) if expected_vals else 0,
         "avg_cost": round(mean(cost_vals), 2) if cost_vals else 0,
         "net_edge": round(net_edge, 4),
@@ -287,10 +288,10 @@ def root():
 @app.route("/dashboard")
 def dashboard():
     cfg = get_cfg()
-    episodes, _ = _load_episodes(cfg.EPISODES_PATH, limit=120)
+    episodes, total = _load_episodes(cfg.EPISODES_PATH, limit=120)
     latest = episodes[0] if episodes else None
     env = _environment_summary()
-    metrics = _dashboard_metrics(episodes)
+    metrics = _dashboard_metrics(episodes, total_count=total)
     next_run_dt = _next_run_time(cfg)
     next_run_label = _format_next_run(next_run_dt) if next_run_dt else "No run scheduled"
     env_mode_code = "live" if not env.get("paper", True) else ("sim" if env.get("simulated") else "paper")
@@ -421,9 +422,9 @@ def log_csv():
 @app.route("/performance")
 def performance():
     cfg = get_cfg()
-    episodes, _ = _load_episodes(cfg.EPISODES_PATH, limit=180)
+    episodes, total = _load_episodes(cfg.EPISODES_PATH, limit=180)
     series = _performance_series(episodes)
-    metrics = _dashboard_metrics(episodes)
+    metrics = _dashboard_metrics(episodes, total_count=total)
     env = _environment_summary()
     return render_template("performance.html", series=series, metrics=metrics, active_page="performance", env=env)
 
