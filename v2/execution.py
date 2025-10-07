@@ -47,12 +47,15 @@ def _target_slice_notional(delta: float, adv_notional: float,
 def build_order_plans(targets: Dict[str,float], current_mv: Dict[str,float],
                       prices: Dict[str,float], adv: Dict[str,float],
                       min_notional: float, max_slices: int,
-                      spread_bps: float, kappa: float, psi: float) -> List[OrderPlan]:
+                      spread_bps: float, kappa: float, psi: float,
+                      stats: Dict[str, int] | None = None) -> List[OrderPlan]:
     plans: List[OrderPlan] = []
     for s, tgt in targets.items():
         cur = current_mv.get(s, 0.0)
         delta = tgt - cur
         if abs(delta) < min_notional:
+            if stats is not None:
+                stats["min_notional_removed"] = stats.get("min_notional_removed", 0) + 1
             continue
         side = "buy" if delta > 0 else "sell"
         px = prices.get(s, 0.0)

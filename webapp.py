@@ -130,7 +130,8 @@ def _portfolio_snapshot_from_episode(latest: Dict[str, Any] | None) -> Dict[str,
     cash = float(gate.get("cash") or 0.0)
     cash_frac = float(gate.get("cash_frac") or 0.0)
     positions = len(latest.get("targets", {}) or {})
-    target_gross = float(((gate.get("exposure") or {}).get("target_gross")) or 0.0)
+    exposure = gate.get("exposure") or {}
+    target_gross = float(exposure.get("sum_abs_weights") or exposure.get("target_gross") or 0.0)
     return {
         "equity": equity,
         "cash": cash,
@@ -144,6 +145,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     if not latest:
         return {
             "summary": "No runs recorded yet.",
+            "plain_english": "No runs recorded yet.",
             "net_bps": 0.0,
             "cost_bps": 0.0,
             "expected_bps": 0.0,
@@ -168,6 +170,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     else:
         reasons = []
     proceed_gate = bool(gate.get("proceed"))
+    proceed_final = bool(gate.get("proceed_final") or latest.get("proceed"))
     orders_submitted = latest.get("orders_submitted") or []
     if isinstance(orders_submitted, list):
         actual_orders = [oid for oid in orders_submitted if oid != "DRY_RUN_NO_ORDERS"]
@@ -178,13 +181,20 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         summary = "Traded {count} orders · net {net:.1f} bps after {cost:.1f} bps costs · turnover {turnover:.1f}%".format(
             count=len(actual_orders), net=net, cost=cost, turnover=turnover_pct
         )
+        plain = "Placed {count} orders; turnover {turnover:.1f}%; exp {expected:.1f} bps → net {net:.1f} bps.".format(
+            count=len(actual_orders), turnover=turnover_pct, expected=expected, net=net
+        )
     else:
         reason_text = ", ".join(reasons) if reasons else "none"
         summary = (
             "Skipped — reasons: {reasons}; gate math: exp {expected:.1f} bps, cost {cost:.1f} bps, net {net:.1f} bps"
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
+        plain = (
+            "Skipped — reasons: {reasons}. Gate: exp {expected:.1f}, cost {cost:.1f}, net {net:.1f} bps."
+        ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
     return {
         "summary": summary,
+        "plain_english": plain,
         "net_bps": net,
         "cost_bps": cost,
         "expected_bps": expected,
@@ -193,6 +203,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         "reasons": reasons,
         "traded": traded,
         "proceed_gate": proceed_gate,
+        "proceed_final": proceed_final,
         "actual_orders": len(actual_orders),
     }
 
@@ -209,8 +220,12 @@ def _dashboard_metrics(episodes: List[Dict[str, Any]], total_count: int | None =
     # Use actual total count from file, not len(episodes) which may be limited
     total_runs = total_count if total_count is not None else len(episodes)
     proceed = sum(1 for ep in episodes if ep.get("proceed"))
-    expected_vals = [float(ep.get("expected_alpha_bps", 0.0)) for ep in episodes]
-    cost_vals = [float(ep.get("est_cost_bps", 0.0)) for ep in episodes]
+    expected_vals: List[float] = []
+    cost_vals: List[float] = []
+    for ep in episodes:
+        gate = ep.get("gate", {}) or {}
+        expected_vals.append(float(gate.get("expected_alpha_bps", ep.get("expected_alpha_bps", 0.0))))
+        cost_vals.append(float(gate.get("cost_bps", ep.get("est_cost_bps", 0.0))))
     net_edge = sum(e - c for e, c in zip(expected_vals, cost_vals)) / 10000.0
     return {
         "total_runs": total_runs,
@@ -265,8 +280,9 @@ def _performance_series(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
     total = 0.0
     for ep in reversed(episodes):
         labels.append(ep.get("as_of", ""))
-        exp = float(ep.get("expected_alpha_bps", 0.0))
-        cost = float(ep.get("est_cost_bps", 0.0))
+        gate = ep.get("gate", {}) or {}
+        exp = float(gate.get("expected_alpha_bps", ep.get("expected_alpha_bps", 0.0)))
+        cost = float(gate.get("cost_bps", ep.get("est_cost_bps", 0.0)))
         expected.append(exp)
         costs.append(cost)
         total += (exp - cost) / 10000.0
@@ -307,6 +323,7 @@ def dashboard():
     }
     portfolio_snapshot = _portfolio_snapshot_from_episode(latest)
     last_run_summary = _summarize_last_run(latest)
+    last_diag = latest.get("diag", {}) if latest else {}
     return render_template(
         "dashboard.html",
         cfg=cfg,
@@ -317,6 +334,7 @@ def dashboard():
         status=status,
         portfolio_snapshot=portfolio_snapshot,
         last_run=last_run_summary,
+        last_diag=last_diag,
         active_page="dashboard",
     )
 
