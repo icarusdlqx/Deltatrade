@@ -491,20 +491,31 @@ def settings():
         data["NEWS_LOOKBACK_DAYS"]   = int(g("NEWS_LOOKBACK_DAYS", "7"))
         data["EVENT_TOP_K"]          = int(g("EVENT_TOP_K", "50"))
         data["EVENT_ALPHA_MULT"]     = float(g("EVENT_ALPHA_MULT", "1.0"))
-        data["TARGET_PORTFOLIO_VOL"] = float(g("TARGET_PORTFOLIO_VOL", "0.12"))
+        data["TARGET_PORTFOLIO_VOL"] = float(g("TARGET_PORTFOLIO_VOL", "0.22"))
         data["LAMBDA_RISK"]          = float(g("LAMBDA_RISK", "8.0"))
         data["TURNOVER_PENALTY"]     = float(g("TURNOVER_PENALTY", "0.0005"))
         data["NAME_MAX"]             = float(g("NAME_MAX", "0.20"))
         data["SECTOR_MAX"]           = float(g("SECTOR_MAX", "0.30"))
         data["REBALANCE_BAND"]       = float(g("REBALANCE_BAND", "0.25"))
         data["TARGET_POSITIONS"]     = int(g("TARGET_POSITIONS", "10"))
+        val_max_positions = g("MAX_POSITIONS")
+        if val_max_positions is not None and val_max_positions != "":
+            data["MAX_POSITIONS"] = int(val_max_positions)
+        for key in [
+            "VOL_TARGET_ANNUAL",
+            "GROSS_EXPOSURE_FLOOR",
+            "MIN_ORDER_NOTIONAL",
+            "MIN_NET_BPS_TO_TRADE",
+        ]:
+            val = g(key)
+            if val is not None and val != "":
+                data[key] = float(val)
         data["CASH_BUFFER"]          = float(g("CASH_BUFFER", "0.00"))
         sx = float(g("SLEEVE_XSEC", "0.6"))
         se = float(g("SLEEVE_EVENT", "0.4"))
         sleeve_total = max(0.0, sx) + max(0.0, se)
         sleeve_total = sleeve_total if sleeve_total > 0 else 1.0
         data["SLEEVE_WEIGHTS"]       = {"xsec": max(0.0, sx)/sleeve_total, "event": max(0.0, se)/sleeve_total}
-        data["MIN_ORDER_NOTIONAL"]   = float(g("MIN_ORDER_NOTIONAL", "25"))
         data["MAX_SLICES"]           = int(g("MAX_SLICES", "5"))
         data["LIMIT_SLIP_BP"]        = int(g("LIMIT_SLIP_BP", "10"))
         data["COST_SPREAD_BPS"]      = float(g("COST_SPREAD_BPS", "5.0"))
