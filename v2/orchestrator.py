@@ -14,6 +14,9 @@ from alpaca.trading.client import TradingClient
 from . import config as C
 from .config import (
     COST_BPS_PER_1PCT_TURNOVER,
+    GROSS_EXPOSURE_FLOOR,
+    MAX_POSITIONS,
+    MAX_WEIGHT_PER_NAME,
     MIN_NET_BPS_TO_TRADE as CONFIG_MIN_NET_BPS,
     MIN_ORDER_NOTIONAL as CONFIG_MIN_ORDER_NOTIONAL,
     VOL_TARGET_ANNUAL,
@@ -291,6 +294,32 @@ def run_once() -> dict:
 
     target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
 
+    active_weights = {s: w for s, w in target_weights.items() if abs(w) > 1e-6}
+    if isinstance(active_weights, dict) and len(active_weights) > MAX_POSITIONS:
+        sorted_active = sorted(active_weights.items(), key=lambda kv: abs(kv[1]), reverse=True)
+        active_weights = dict(sorted_active[:MAX_POSITIONS])
+
+    gross = sum(abs(w) for w in active_weights.values())
+    if gross > 0 and gross < GROSS_EXPOSURE_FLOOR:
+        scale = min(GROSS_EXPOSURE_FLOOR / max(gross, 1e-9), 1.0)
+        active_weights = {s: w * scale for s, w in active_weights.items()}
+
+        try:
+            max_name_cap = float(getattr(cfg, "NAME_MAX", MAX_WEIGHT_PER_NAME))
+            active_weights = {s: max(min(w, max_name_cap), 0.0) for s, w in active_weights.items()}
+            gross2 = sum(abs(w) for w in active_weights.values())
+            if gross2 > 1.0 and gross2 > 0:
+                active_weights = {s: w / gross2 for s, w in active_weights.items()}
+        except Exception:
+            pass
+
+    target_weights = {s: active_weights.get(s, 0.0) for s in target_weights.keys()}
+    diag_stage = diag.setdefault("stage", {})
+    diag_stage["gross_after_floor"] = round(sum(abs(w) for w in active_weights.values()), 4)
+    diag_stage["names_after_cap"] = int(len([w for w in active_weights.values() if abs(w) > 1e-6]))
+
+    w_final = np.array([target_weights.get(s, 0.0) for s in candidates], dtype=float)
+
     diag["stage"]["optimizer_nonzero"] = int(sum(1 for w in target_weights.values() if abs(w) > 1e-6))
     diag["exposure"] = {
         "sum_abs_weights": float(sum(abs(w) for w in target_weights.values())),
@@ -301,13 +330,17 @@ def run_once() -> dict:
     account = trade_client.get_account()
     equity = float(account.equity)
     investable = equity * (1 - float(cfg.CASH_BUFFER))
-    targets = {s: float(w * investable) for s, w in zip(candidates, w_scaled)}
+    cur_mv_all = {p.symbol: float(p.market_value) for p in trade_client.get_all_positions()}
+    targets = {s: float(target_weights.get(s, 0.0) * investable) for s in candidates}
+    # Ensure symbols trimmed from the active book head towards zero exposure
+    for s in list(cur_mv_all.keys()):
+        if s not in targets:
+            targets[s] = 0.0
 
     state["equity"] = equity
     state["cash"] = float(getattr(account, "cash", 0.0) or 0.0)
 
     # Rebalance bands (skip for initial allocation from cash)
-    cur_mv_all = {p.symbol: float(p.market_value) for p in trade_client.get_all_positions()}
     targets_banded = {}
     filter_counts = {"min_notional_removed": 0, "turnover_cap_removed": 0, "already_at_target_removed": 0}
     for s, tgt in targets.items():
@@ -326,7 +359,7 @@ def run_once() -> dict:
     # Cost-aware gate
     prices = {s: float(bars[s]["close"].iloc[-1]) for s in candidates if s in bars}
     adv = _estimate_adv(bars)
-    expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_scaled)) * 10000.0
+    expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_final)) * 10000.0
     cost_breakdown = {}
     rebalance_deltas: Dict[str, Dict[str, float]] = {}
     investable_denom = max(1.0, investable)
@@ -362,6 +395,7 @@ def run_once() -> dict:
     planned_orders: List[Dict[str, Any]] = []
     order_plans = []
     order_plan_stats: Dict[str, int] = {}
+    dust_removed_local = 0
     if targets_banded:
         order_plan_stats = {}
         order_plans = build_order_plans(
@@ -377,9 +411,14 @@ def run_once() -> dict:
             order_plan_stats,
         )
 
+        filtered_plans = []
         for plan in order_plans:
             px = float(prices.get(plan.symbol, 0.0))
             notional = abs(float(plan.qty) * px)
+            if notional < min_order_notional:
+                dust_removed_local += 1
+                continue
+            filtered_plans.append(plan)
             planned_orders.append(
                 {
                     "symbol": plan.symbol,
@@ -390,6 +429,7 @@ def run_once() -> dict:
                     "slices": int(plan.slices),
                 }
             )
+        order_plans = filtered_plans
 
         # Log onboarding scenario
         if len(order_plans) > 0 and (state.get("cash", 0.0) / max(state.get("equity", 1.0), 1e-9) >= 0.90):
@@ -403,7 +443,7 @@ def run_once() -> dict:
                 },
             )
 
-    filter_counts["min_notional_removed"] = int(order_plan_stats.get("min_notional_removed", 0))
+    filter_counts["min_notional_removed"] = int(order_plan_stats.get("min_notional_removed", 0) + dust_removed_local)
 
     try:
         equity_snap = float(account.portfolio_value)
@@ -441,6 +481,9 @@ def run_once() -> dict:
     net_bps = expected_alpha_bps - cost_bps
     est_cost_bps = cost_bps
 
+    avg_ticket = (est_dollars / len(planned_orders)) if planned_orders else 0.0
+    diag_stage["avg_ticket_notional"] = round(avg_ticket, 2) if planned_orders else 0.0
+
     passes_net = (net_bps >= min_net_bps_to_trade)
     force_onboard = (cash_frac >= 0.90) and (len(planned_orders) > 0)
     proceed = (len(planned_orders) > 0) and (passes_net or force_onboard)
@@ -476,7 +519,7 @@ def run_once() -> dict:
     ]
 
     # Risk officer
-    proposed_w = {s: (targets_banded.get(s, 0.0) / max(1.0, investable)) for s in candidates}
+    proposed_w = {s: target_weights.get(s, 0.0) for s in candidates}
     roc = risk_officer_check(
         proposed_w,
         {s: rev_sec.get(sector_ids[i], "UNKNOWN") for i, s in enumerate(candidates)},

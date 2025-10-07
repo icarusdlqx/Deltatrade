@@ -211,14 +211,39 @@
       </div>
 
       <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Portfolio &amp; risk</h5>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label" for="MAX_POSITIONS">Max positions</label>
+            <input type="number" class="form-control" id="MAX_POSITIONS" name="MAX_POSITIONS" min="1" max="20" value="{{ cfg.MAX_POSITIONS or 10 }}">
+            <div class="form-text">Upper bound on number of names held.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="VOL_TARGET_ANNUAL">Vol target (annualized)</label>
+            <input type="number" step="0.01" class="form-control" id="VOL_TARGET_ANNUAL" name="VOL_TARGET_ANNUAL" value="{{ cfg.VOL_TARGET_ANNUAL or 0.22 }}">
+            <div class="form-text">Target portfolio volatility (e.g., 0.22 = 22% annualized).</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="GROSS_EXPOSURE_FLOOR">Gross exposure floor</label>
+            <input type="number" step="0.01" class="form-control" id="GROSS_EXPOSURE_FLOOR" name="GROSS_EXPOSURE_FLOOR" value="{{ cfg.GROSS_EXPOSURE_FLOOR or 0.75 }}">
+            <div class="form-text">Scale up (without leverage) if post-vol targeting gross is below this.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="MIN_ORDER_NOTIONAL">Min order notional ($)</label>
+            <input type="number" step="1" class="form-control" id="MIN_ORDER_NOTIONAL" name="MIN_ORDER_NOTIONAL" value="{{ cfg.MIN_ORDER_NOTIONAL or 125 }}">
+            <div class="form-text">Skip trades smaller than this to avoid dust.</div>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label" for="MIN_NET_BPS_TO_TRADE">Min net bps to trade</label>
+            <input type="number" step="0.1" class="form-control" id="MIN_NET_BPS_TO_TRADE" name="MIN_NET_BPS_TO_TRADE" value="{{ cfg.MIN_NET_BPS_TO_TRADE or 0 }}">
+            <div class="form-text">Gate: expected bps − costs must meet or exceed this threshold.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card-surface p-4 mb-4">
         <h5 class="fw-semibold mb-3">Execution & costs</h5>
         <div class="row g-3">
-          <div class="col-md-3">
-            <div class="form-floating">
-              <input type="number" step="0.01" class="form-control" id="MIN_ORDER_NOTIONAL" name="MIN_ORDER_NOTIONAL" value="{{ cfg.MIN_ORDER_NOTIONAL }}">
-              <label for="MIN_ORDER_NOTIONAL">Min order notional</label>
-            </div>
-          </div>
           <div class="col-md-3">
             <div class="form-floating">
               <input type="number" class="form-control" id="MAX_SLICES" name="MAX_SLICES" value="{{ cfg.MAX_SLICES }}">
