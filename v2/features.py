@@ -1,15 +1,35 @@
 from __future__ import annotations
-from typing import Dict
+from typing import Dict, List
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from .utils import zscore, winsorize, ann_vol_from_daily, max_drawdown
+from .datafeed import get_daily_bars
+
+
+def bars_from_multiindex(raw: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    if raw is None or raw.empty:
+        return {}
+    out: Dict[str, pd.DataFrame] = {}
+    for sym, df in raw.groupby(level=0):
+        dfg = df.reset_index(level=0, drop=True).sort_index()
+        dfg.columns = [str(c).lower() for c in dfg.columns]
+        out[str(sym)] = dfg
+    return out
+
+
+def fetch_bars(symbols: List[str], lookback_days: int = 252) -> Dict[str, pd.DataFrame]:
+    raw = get_daily_bars(symbols, lookback_days=lookback_days)
+    return bars_from_multiindex(raw)
 
 def compute_daily_returns(bars: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     rets = {}
     for s, df in bars.items():
-        if "close" in df.columns and len(df) > 1:
-            rets[s] = df["close"].pct_change()
+        if df is None or len(df) <= 1:
+            continue
+        dfg = df.rename(columns=str.lower)
+        if "close" in dfg.columns:
+            rets[s] = dfg["close"].pct_change()
     return pd.DataFrame(rets).dropna(how="all")
 
 def moving_average(series: pd.Series, n: int) -> pd.Series:
@@ -21,6 +41,13 @@ def compute_panel(
     resid_lookback: int = 63, reversal_days: int = 3,
     winsor_pct: float = 0.02
 ) -> pd.DataFrame:
+    normed: Dict[str, pd.DataFrame] = {}
+    for s, df in bars.items():
+        if df is None or len(df) == 0:
+            continue
+        dfg = df.rename(columns=str.lower)
+        normed[s] = dfg
+    bars = normed
     rows = []
     rets_df = compute_daily_returns(bars)
     last_prices = {s: df["close"].iloc[-1] for s, df in bars.items() if "close" in df.columns and len(df) > 0}

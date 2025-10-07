@@ -20,12 +20,13 @@ from .config import (
 )
 from .settings_bridge import get_cfg
 from .utils import write_jsonl, read_json, write_json
-from .features import compute_panel
+from .features import compute_panel, bars_from_multiindex
 from .news import fetch_news_map
 from .agents import score_events_for_symbols, risk_officer_check
 from .optimizer import solve_weights, scale_to_target_vol
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
 from .universe import build_universe, load_top50_etfs
+from .datafeed import get_daily_bars
 
 logger = logging.getLogger(__name__)
 log = logger
@@ -129,10 +130,39 @@ def run_once() -> dict:
     diag: Dict[str, Any] = {"stage": {}}
     diag["stage"]["universe_count"] = len(symbols)
 
-    bars = _fetch_bars(data_client, symbols, cfg.DATA_LOOKBACK_DAYS)
-    diag["stage"]["symbols_with_bars"] = int(len(bars))
+    lookback_days = int(max(int(cfg.DATA_LOOKBACK_DAYS), 252))
+    diag["stage"]["lookback_days"] = lookback_days
+    diag["stage"]["fallback_used"] = False
+
+    symbols_for_bars = list(dict.fromkeys(list(symbols) + ["SPY"]))
+    raw_bars: pd.DataFrame | None
+    if getattr(data_client, "is_simulated", False):
+        bars_dict = _fetch_bars(data_client, symbols_for_bars, lookback_days)
+        if bars_dict:
+            raw_bars = pd.concat(
+                {sym: df for sym, df in bars_dict.items() if df is not None and not df.empty},
+                names=["symbol", "timestamp"],
+            )
+        else:
+            raw_bars = pd.DataFrame()
+        bars = dict(bars_dict)
+    else:
+        raw_bars = get_daily_bars(symbols_for_bars, lookback_days=lookback_days)
+        bars = bars_from_multiindex(raw_bars)
+
+    if raw_bars is None or raw_bars.empty:
+        symbols_with_bars = 0
+    else:
+        symbols_with_bars = int(raw_bars.index.get_level_values(0).unique().size)
+    diag["stage"]["symbols_with_bars"] = symbols_with_bars
+    universe_count = max(1, int(diag["stage"].get("universe_count", 1)))
+    coverage_ratio = symbols_with_bars / universe_count
+    diag["stage"]["data_coverage_ratio"] = float(coverage_ratio)
+    diag["stage"]["data_coverage"] = "low" if coverage_ratio < 0.7 else "ok"
+
     symbols = [s for s in symbols if s in bars and len(bars[s]) >= cfg.MIN_BARS]
-    if "SPY" not in symbols and "SPY" in bars: symbols.append("SPY")
+    if "SPY" not in symbols and "SPY" in bars:
+        symbols.append("SPY")
 
     panel = compute_panel(bars, spy="SPY", fast=cfg.TREND_FAST, slow=cfg.TREND_SLOW,
                           resid_lookback=cfg.RESID_MOM_LOOKBACK, reversal_days=cfg.REVERSAL_DAYS,
@@ -141,16 +171,34 @@ def run_once() -> dict:
     diag["stage"]["valid_features"] = int(len(valid_df))
 
     # Event-driven alpha
-    if cfg.ENABLE_EVENT_SCORE and api_key not in (None, "SIMULATED"):
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    event_alpha_bps: Dict[str, float] = {}
+    llm_meta: Dict[str, object] = {
+        "called": False,
+        "model": os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or C.OPENAI_MODEL,
+        "effort": os.getenv("REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") or C.OPENAI_REASONING_EFFORT,
+        "tokens": 0,
+    }
+    if cfg.ENABLE_EVENT_SCORE and openai_api_key and len(panel) > 0:
         top_syms = panel.index.tolist()[:cfg.EVENT_TOP_K]
-        news_map = fetch_news_map(top_syms, cfg.NEWS_LOOKBACK_DAYS, api_key, api_sec)
-        event_alpha_bps = score_events_for_symbols(news_map, C.OPENAI_MODEL, C.OPENAI_REASONING_EFFORT,
-                                                   C.EVENT_BPS_PER_DAY, max_abs_bps=20)
-        event_alpha_bps = {k: float(v) * float(cfg.EVENT_ALPHA_MULT) for k, v in event_alpha_bps.items()}
-    else:
-        event_alpha_bps = {}
+        if api_key in (None, "SIMULATED") or api_sec in (None, "SIMULATED"):
+            news_map = {sym: [] for sym in top_syms}
+        else:
+            news_map = fetch_news_map(top_syms, cfg.NEWS_LOOKBACK_DAYS, api_key, api_sec)
+        event_scores, llm_meta = score_events_for_symbols(
+            news_map,
+            C.OPENAI_MODEL,
+            C.OPENAI_REASONING_EFFORT,
+            C.EVENT_BPS_PER_DAY,
+            max_abs_bps=20,
+        )
+        event_alpha_bps = {k: float(v) * float(cfg.EVENT_ALPHA_MULT) for k, v in event_scores.items()}
 
     diag["stage"]["event_scored"] = int(len(event_alpha_bps or {}))
+    diag["stage"]["llm_called"] = int(bool(llm_meta.get("called")))
+    diag["stage"]["llm_tokens"] = int(llm_meta.get("tokens") or 0)
+    diag["stage"]["llm_model"] = llm_meta.get("model")
+    diag["stage"]["llm_effort"] = llm_meta.get("effort")
 
     # Factor + event blend
     factor_alpha_bps = 8.0 * panel["score_z"].fillna(0)
@@ -219,6 +267,27 @@ def run_once() -> dict:
         w_scaled = scale_to_target_vol(w_opt, Sig_sub, float(cfg.TARGET_PORTFOLIO_VOL)/np.sqrt(252.0))
     else:
         w_scaled = w_opt
+
+    fallback_used = False
+    nonzero_sum = float(np.sum(np.abs(w_scaled))) if len(w_scaled) else 0.0
+    if nonzero_sum <= 1e-9 and len(candidates) >= 5 and float(cfg.TARGET_PORTFOLIO_VOL) > 0:
+        k = min(10, len(candidates))
+        w_fb = np.zeros_like(w_scaled)
+        if k > 0:
+            max_weight = float(cfg.NAME_MAX)
+            ew = 1.0 / k
+            for idx in range(k):
+                w_fb[idx] = min(ew, max_weight)
+            target_vol_annual = float(cfg.TARGET_PORTFOLIO_VOL)
+            if target_vol_annual > 0 and Sig_sub.size > 0:
+                w_fb = scale_to_target_vol(w_fb, Sig_sub, target_vol_annual / np.sqrt(252.0))
+            w_fb = np.clip(w_fb, 0.0, max_weight)
+            total_w = w_fb.sum()
+            if total_w > 1.0:
+                w_fb = w_fb / total_w
+            w_scaled = w_fb
+            fallback_used = True
+    diag["stage"]["fallback_used"] = bool(diag["stage"].get("fallback_used")) or fallback_used
 
     target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
 
@@ -383,6 +452,8 @@ def run_once() -> dict:
         reasons.append("net_below_min")
     if force_onboard:
         reasons.append("onboarding")
+    if diag.get("stage", {}).get("fallback_used"):
+        reasons.append("fallback_portfolio")
 
     if force_onboard:
         log.info("onboarding", extra={"cash_frac": cash_frac, "reason": "initial allocation from cash"})

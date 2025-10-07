@@ -1,11 +1,13 @@
 from __future__ import annotations
-import os, json
-from typing import Dict, List
+import os, json, logging
+from typing import Dict, List, Tuple
 from pydantic import BaseModel, Field
 try:
     from openai import OpenAI
 except Exception:
     OpenAI = None
+
+log = logging.getLogger(__name__)
 
 class EventScore(BaseModel):
     symbol: str
@@ -35,11 +37,32 @@ def _extract_text(resp) -> str:
 
 def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
                              model: str, reasoning_effort: str,
-                             bps_map: Dict[str, int], max_abs_bps: int) -> Dict[str, float]:
+                             bps_map: Dict[str, int], max_abs_bps: int) -> Tuple[Dict[str, float], Dict[str, object]]:
+    symbols = list(news_by_symbol.keys())
+    n_tickers = len(symbols)
+    model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or model or "gpt-5"
+    effort = os.getenv("REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") or reasoning_effort or "medium"
+    meta: Dict[str, object] = {
+        "called": False,
+        "model": model_name,
+        "effort": effort,
+        "tokens": 0,
+        "n_tickers": n_tickers,
+        "reason": None,
+    }
+
+    if not os.getenv("OPENAI_API_KEY"):
+        meta["reason"] = "no_api_key"
+        log.info("llm_skip", extra={"why": meta["reason"], "n_tickers": n_tickers})
+        return {s: 0.0 for s in symbols}, meta
+
     try:
         cli = _client()
     except Exception:
-        return {s: 0.0 for s in news_by_symbol.keys()}
+        meta["reason"] = "client_init_failed"
+        log.info("llm_skip", extra={"why": meta["reason"], "n_tickers": n_tickers})
+        return {s: 0.0 for s in symbols}, meta
+
     out: Dict[str, float] = {}
     schema = {
       "name": "EventScore",
@@ -57,6 +80,7 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
         "required": ["symbol","direction","magnitude","confidence","half_life_days"]
       }
     }
+    total_tokens = 0
     for sym, items in news_by_symbol.items():
         if not items:
             out[sym] = 0.0
@@ -65,8 +89,8 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
         try:
             # Prefer Responses API with JSON schema
             resp = cli.responses.create(
-                model=model,
-                reasoning={"effort": reasoning_effort},
+                model=model_name,
+                reasoning={"effort": effort},
                 input=[
                     {"role":"system","content":"You are an equity event analyst. Return a calibrated, directionally correct score for near-term stock impact."},
                     {"role":"user","content": f"Symbol: {sym}\nConsider the news items (most recent first):\n{text}\nReturn EventScore JSON."}
@@ -79,9 +103,32 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
             bps = es.direction * float(es.confidence) * float(bps_map.get(es.magnitude, 0))
             bps = max(-max_abs_bps, min(max_abs_bps, bps))
             out[sym] = float(bps)
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                tokens = getattr(usage, "total_tokens", None)
+                if tokens is not None:
+                    total_tokens += int(tokens)
+            meta["called"] = True
         except Exception:
             out[sym] = 0.0
-    return out
+    if meta.get("called"):
+        meta["tokens"] = total_tokens
+        log.info(
+            "llm_call",
+            extra={
+                "model": model_name,
+                "effort": effort,
+                "tokens": total_tokens,
+                "n_tickers": n_tickers,
+            },
+        )
+    else:
+        meta["reason"] = meta.get("reason") or "no_calls"
+        log.info(
+            "llm_skip",
+            extra={"why": meta["reason"], "model": model_name, "n_tickers": n_tickers},
+        )
+    return out, meta
 
 def risk_officer_check(proposed: Dict[str, float], sector_map: Dict[str, str], sector_max: float, name_max: float) -> Dict[str, str]:
     import collections
