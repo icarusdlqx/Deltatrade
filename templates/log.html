@@ -172,7 +172,7 @@
           <td class="small">
             <div><span class="text-muted">Universe:</span> {{ stage.get('universe_count', 0) }} · Bars: {{ stage.get('symbols_with_bars', 0) }} · Features: {{ stage.get('valid_features', 0) }}</div>
             <div><span class="text-muted">Candidates:</span> {{ stage.get('candidates_topN', 0) }} · Opt nonzero: {{ stage.get('optimizer_nonzero', 0) }}</div>
-            <div><span class="text-muted">Target:</span> K {{ stage.get('target_positions', 0) }} · opt pre {{ stage.get('nonzero_pre_cap', stage.get('optimizer_nonzero', 0)) }} · post {{ stage.get('nonzero_post_cap', 0) }} · fill {{ stage.get('fill_count', 0) }} · gross {{ '%.2f'|format((stage.get('gross_final', 0) or 0)|float) }}</div>
+            <div><span class="text-muted">Target:</span> Target K={{ stage.get('target_positions', 0) }} · Opt nonzero pre={{ stage.get('nonzero_pre', stage.get('optimizer_nonzero', 0)) }} · post={{ stage.get('nonzero_post', 0) }} · fill={{ stage.get('fill_count', 0) }} · gross={{ '%.2f'|format((stage.get('gross_final', 0) or 0)|float) }}</div>
             {% set top = (diag.get('top_candidates') or [])[:3] %}
             {% if top %}
             <div><span class="text-muted">Top:</span> {% for item in top %}{{ item.get('symbol') }} ({{ '%.1f'|format(item.get('score', 0) | float) }}){% if not loop.last %}, {% endif %}{% endfor %}</div>

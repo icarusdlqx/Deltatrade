@@ -122,7 +122,7 @@
         <dt class="col-6 text-muted">Optimizer nonzero</dt>
         <dd class="col-6">{{ stage.get('optimizer_nonzero', 0) }}</dd>
         <dt class="col-6 text-muted">Target slots</dt>
-        <dd class="col-6">K {{ stage.get('target_positions', 0) }} · pre {{ stage.get('nonzero_pre_cap', stage.get('optimizer_nonzero', 0)) }} · post {{ stage.get('nonzero_post_cap', 0) }} · fill {{ stage.get('fill_count', 0) }} · gross {{ '%.2f'|format((stage.get('gross_final', 0) or 0)|float) }}</dd>
+        <dd class="col-6">Target K={{ stage.get('target_positions', 0) }} · Opt nonzero pre={{ stage.get('nonzero_pre', stage.get('optimizer_nonzero', 0)) }} · post={{ stage.get('nonzero_post', 0) }} · fill={{ stage.get('fill_count', 0) }} · gross={{ '%.2f'|format((stage.get('gross_final', 0) or 0)|float) }}</dd>
         <dt class="col-6 text-muted">Event scored</dt>
         <dd class="col-6">{{ stage.get('event_scored', 0) }}</dd>
         <dt class="col-6 text-muted">Filters removed</dt>

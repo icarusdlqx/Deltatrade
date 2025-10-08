@@ -703,7 +703,9 @@ def settings():
         data["NAME_MAX"]             = float(g("NAME_MAX", "0.20"))
         data["SECTOR_MAX"]           = float(g("SECTOR_MAX", "0.30"))
         data["REBALANCE_BAND"]       = float(g("REBALANCE_BAND", "0.25"))
-        data["TARGET_POSITIONS"]     = int(g("TARGET_POSITIONS", "10"))
+        tp = g("TARGET_POSITIONS")
+        if tp is not None and tp != "":
+            data["TARGET_POSITIONS"] = int(tp)
         val_max_positions = g("MAX_POSITIONS")
         if val_max_positions is not None and val_max_positions != "":
             data["MAX_POSITIONS"] = int(val_max_positions)
