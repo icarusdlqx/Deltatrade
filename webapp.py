@@ -15,6 +15,8 @@ import pytz
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
 from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
 
 from v2.config import MAX_LOG_ROWS
 from v2.orchestrator import run_once
@@ -272,6 +274,20 @@ def _positions_snapshot(env: Dict[str, Any]) -> Dict[str, Any]:
         return {"positions": [], "cash": 0.0, "equity": 0.0, "error": str(exc), "simulated": False}
 
 
+def _trading_client(env: Dict[str, Any]):
+    if env.get("simulated"):
+        from v2.simulated_clients import SimStockHistoricalDataClient, SimTradingClient
+
+        data_client = SimStockHistoricalDataClient()
+        return SimTradingClient(data_client)
+
+    if not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")):
+        raise RuntimeError("Alpaca credentials not configured.")
+
+    paper = os.environ.get("ALPACA_PAPER", "true").lower() in ("true", "1", "yes", "y")
+    return TradingClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], paper=paper)
+
+
 def _performance_series(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
     labels: List[str] = []
     expected: List[float] = []
@@ -343,7 +359,105 @@ def dashboard():
 def positions():
     env = _environment_summary()
     snapshot = _positions_snapshot(env)
-    return render_template("positions.html", snapshot=snapshot, env=env, active_page="positions")
+    message = request.args.get("message")
+    status = request.args.get("status", "success")
+    return render_template(
+        "positions.html",
+        snapshot=snapshot,
+        env=env,
+        active_page="positions",
+        message=message,
+        status=status,
+    )
+
+
+@app.route("/positions/sell", methods=["POST"])
+def sell_position():
+    env = _environment_summary()
+    symbol = (request.form.get("symbol") or "").strip().upper()
+    if not symbol:
+        return redirect(url_for("positions", status="error", message="No symbol provided."))
+
+    snapshot = _positions_snapshot(env)
+    position = next(
+        (p for p in snapshot.get("positions", []) if str(p.get("symbol", "")).upper() == symbol),
+        None,
+    )
+    if not position:
+        return redirect(url_for("positions", status="error", message=f"Position {symbol} not found."))
+
+    qty = abs(float(position.get("qty") or 0.0))
+    if qty <= 0:
+        return redirect(url_for("positions", status="error", message=f"Position {symbol} has no quantity to sell."))
+
+    qty = round(qty, 6)
+
+    try:
+        client = _trading_client(env)
+    except Exception as exc:
+        logger.exception("Failed to initialise trading client for sell %s", symbol)
+        return redirect(url_for("positions", status="error", message=f"Unable to sell {symbol}: {exc}"))
+
+    try:
+        req = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        client.submit_order(req)
+    except Exception as exc:
+        logger.exception("Error submitting sell order for %s", symbol)
+        return redirect(url_for("positions", status="error", message=f"Failed to sell {symbol}: {exc}"))
+
+    message = f"Submitted sell order for {symbol} ({qty:.4f} shares)."
+    return redirect(url_for("positions", status="success", message=message))
+
+
+@app.route("/positions/sell_all", methods=["POST"])
+def sell_all_positions():
+    env = _environment_summary()
+    snapshot = _positions_snapshot(env)
+    positions = [p for p in snapshot.get("positions", []) if abs(float(p.get("qty") or 0.0)) > 0]
+
+    if not positions:
+        return redirect(url_for("positions", status="success", message="No positions to sell."))
+
+    try:
+        client = _trading_client(env)
+    except Exception as exc:
+        logger.exception("Failed to initialise trading client for sell all")
+        return redirect(url_for("positions", status="error", message=f"Unable to sell positions: {exc}"))
+
+    failures: List[str] = []
+    for pos in positions:
+        symbol = str(pos.get("symbol", "")).upper()
+        qty = round(abs(float(pos.get("qty") or 0.0)), 6)
+        if qty <= 0:
+            continue
+        try:
+            req = MarketOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+            client.submit_order(req)
+        except Exception:
+            logger.exception("Error submitting sell order for %s", symbol)
+            failures.append(symbol)
+
+    if failures:
+        failed_list = ", ".join(failures)
+        return redirect(
+            url_for(
+                "positions",
+                status="error",
+                message=f"Failed to sell: {failed_list}.",
+            )
+        )
+
+    return redirect(url_for("positions", status="success", message="Submitted sell orders for all positions."))
 
 
 @app.route("/log")
