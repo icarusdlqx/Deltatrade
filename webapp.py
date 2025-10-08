@@ -14,13 +14,18 @@ import pytz
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
-from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+from alpaca_client import (
+    close_all_positions as alp_close_all_positions,
+    close_position as alp_close_position,
+    get_account as alp_get_account,
+    get_clock as alp_get_clock,
+    list_positions as alp_list_positions,
+)
 
 from v2.config import MAX_LOG_ROWS
 from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
+from v2.utils import write_jsonl
 
 # Configure logging for webapp
 logger = logging.getLogger(__name__)
@@ -42,8 +47,8 @@ NAV_ITEMS = [
 
 
 def _environment_summary() -> Dict[str, Any]:
-    alpaca_key = bool(os.environ.get("ALPACA_API_KEY"))
-    alpaca_secret = bool(os.environ.get("ALPACA_SECRET_KEY"))
+    alpaca_key = bool(os.environ.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY_V3"))
+    alpaca_secret = bool(os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY_V3"))
     openai_key = bool(os.environ.get("OPENAI_API_KEY"))
     sim_mode_env = os.environ.get("SIM_MODE", "false").lower() in ("true", "1", "yes", "y")
     simulated = sim_mode_env or not (alpaca_key and alpaca_secret)
@@ -83,6 +88,26 @@ def _load_episodes(path: str, limit: int = 200, offset: int = 0) -> Tuple[List[D
             continue
     episodes.reverse()
     return episodes, total
+
+
+def _alpaca_credentials_available() -> bool:
+    api_key = os.environ.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY_V3")
+    secret = os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY_V3")
+    return bool(api_key and secret)
+
+
+def insert_log(level: str, kind: str, data: Dict[str, Any]) -> None:
+    try:
+        cfg = get_cfg()
+        record = {
+            "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
+            "level": level,
+            "kind": kind,
+            "payload": data,
+        }
+        write_jsonl(cfg.EPISODES_PATH, record)
+    except Exception:
+        logger.exception("Failed to record log entry", extra={"level": level, "kind": kind})
 
 
 def _next_run_time(cfg) -> datetime | None:
@@ -248,44 +273,103 @@ def _positions_snapshot(env: Dict[str, Any]) -> Dict[str, Any]:
         snapshot["simulated"] = True
         return snapshot
 
-    if not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")):
+    if not _alpaca_credentials_available():
         return {"positions": [], "cash": 0.0, "equity": 0.0, "error": "Alpaca credentials not configured.", "simulated": False}
 
     try:
-        paper = os.environ.get("ALPACA_PAPER", "true").lower() in ("true", "1", "yes", "y")
-        client = TradingClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], paper=paper)
-        positions = []
-        for pos in client.get_all_positions():
-            positions.append({
-                "symbol": pos.symbol,
-                "qty": float(getattr(pos, "qty", getattr(pos, "quantity", 0.0))),
-                "avg_price": float(getattr(pos, "avg_entry_price", 0.0)),
-                "current_price": float(getattr(pos, "current_price", 0.0)),
-                "market_value": float(getattr(pos, "market_value", 0.0)),
-            })
-        account = client.get_account()
+        raw_positions = alp_list_positions()
+        positions: List[Dict[str, Any]] = []
+        for pos in raw_positions:
+            try:
+                qty = float(pos.get("qty") or 0.0)
+            except Exception:
+                qty = 0.0
+            try:
+                qty_available = float(pos.get("qty_available") or 0.0)
+            except Exception:
+                qty_available = qty
+            positions.append(
+                {
+                    "symbol": pos.get("symbol"),
+                    "qty": qty,
+                    "qty_available": qty_available,
+                    "avg_price": float(pos.get("avg_entry_price") or 0.0),
+                    "current_price": float(pos.get("current_price") or 0.0),
+                    "market_value": float(pos.get("market_value") or 0.0),
+                    "unrealized_pl": float(pos.get("unrealized_pl") or 0.0),
+                }
+            )
+        account = alp_get_account()
         return {
             "positions": positions,
-            "cash": float(getattr(account, "cash", 0.0)),
-            "equity": float(getattr(account, "equity", 0.0)),
+            "cash": float(account.get("cash", 0.0)),
+            "equity": float(account.get("equity", 0.0)),
             "simulated": False,
         }
     except Exception as exc:
         return {"positions": [], "cash": 0.0, "equity": 0.0, "error": str(exc), "simulated": False}
 
 
-def _trading_client(env: Dict[str, Any]):
-    if env.get("simulated"):
-        from v2.simulated_clients import SimStockHistoricalDataClient, SimTradingClient
+def _safe_clock(env: Dict[str, Any]) -> Dict[str, Any]:
+    if env.get("simulated") or not _alpaca_credentials_available():
+        return {"is_open": None, "next_open": None, "next_close": None, "error": "unavailable"}
+    try:
+        return alp_get_clock()
+    except Exception as exc:
+        return {"is_open": None, "next_open": None, "next_close": None, "error": str(exc)}
 
-        data_client = SimStockHistoricalDataClient()
-        return SimTradingClient(data_client)
 
-    if not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")):
-        raise RuntimeError("Alpaca credentials not configured.")
+def _market_status_suffix(clock: Dict[str, Any]) -> str:
+    if not clock:
+        return ""
+    is_open = clock.get("is_open")
+    if is_open is None or is_open:
+        return ""
+    next_open = clock.get("next_open")
+    if next_open:
+        return f" Market closed until {next_open}."
+    return " Market is currently closed."
 
-    paper = os.environ.get("ALPACA_PAPER", "true").lower() in ("true", "1", "yes", "y")
-    return TradingClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], paper=paper)
+
+def _normalize_error_code(error: str | None) -> str:
+    if not error:
+        return ""
+    return str(error).split(":", 1)[0].strip()
+
+
+def _format_error_reason(error: str | None, symbol: str | None) -> str:
+    code = _normalize_error_code(error)
+    mapping = {
+        "missing_symbol": "No symbol provided.",
+        "no_position": "No open position in {symbol}.",
+        "zero_available": "No shares available to sell for {symbol}.",
+        "missing_credentials": "Alpaca API credentials not configured.",
+        "simulation_mode": "Manual sells are disabled in simulation mode.",
+    }
+    template = mapping.get(code)
+    if template:
+        if "{symbol}" in template:
+            label = symbol or "the requested symbol"
+            return template.format(symbol=label)
+        return template
+    return str(error or "Unknown error")
+
+
+def _sell_success_message(symbol: str, result: Dict[str, Any], clock: Dict[str, Any]) -> str:
+    method = result.get("method") or "close_position"
+    base = f"Sell {symbol}: submitted via {method.replace('_', ' ')}."
+    qty = result.get("qty")
+    if qty:
+        base += f" Qty {qty}."
+    return base + _market_status_suffix(clock)
+
+
+def _sell_failure_message(prefix: str, symbol: str | None, result: Dict[str, Any], clock: Dict[str, Any]) -> str:
+    error_text = _format_error_reason(result.get("error"), symbol)
+    fallback = result.get("fallback_error")
+    if fallback and fallback != result.get("error"):
+        error_text = f"{error_text} (fallback: {fallback})"
+    return f"{prefix}{error_text}{_market_status_suffix(clock)}"
 
 
 def _performance_series(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -371,93 +455,101 @@ def positions():
     )
 
 
-@app.route("/positions/sell", methods=["POST"])
+@app.post("/positions/sell")
 def sell_position():
     env = _environment_summary()
-    symbol = (request.form.get("symbol") or "").strip().upper()
+    payload = request.get_json(silent=True) or {}
+    symbol = (request.form.get("symbol") if request.form else None) or payload.get("symbol") or ""
+    symbol = str(symbol).strip().upper()
+    clock = _safe_clock(env)
+    status_code = 200
+
     if not symbol:
-        return redirect(url_for("positions", status="error", message="No symbol provided."))
+        result: Dict[str, Any] = {"ok": False, "error": "missing_symbol"}
+        message = _sell_failure_message("Sell: failed — ", None, result, clock)
+        status_code = 400
+    elif env.get("simulated"):
+        result = {"ok": False, "error": "simulation_mode"}
+        message = _sell_failure_message(f"Sell {symbol}: failed — ", symbol, result, clock)
+    elif not _alpaca_credentials_available():
+        result = {"ok": False, "error": "missing_credentials"}
+        message = _sell_failure_message(f"Sell {symbol}: failed — ", symbol, result, clock)
+    else:
+        try:
+            result = alp_close_position(symbol)
+        except Exception as exc:
+            logger.exception("Error attempting to close position %s", symbol)
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+        if result.get("ok"):
+            message = _sell_success_message(symbol, result, clock)
+        else:
+            message = _sell_failure_message(f"Sell {symbol}: failed — ", symbol, result, clock)
+
+    log_payload = {
+        "action": "manual_sell",
+        "symbol": symbol,
+        "clock": clock,
+        "result": result,
+        "message": message,
+    }
+    insert_log("ORDER", "manual_sell", log_payload)
 
     snapshot = _positions_snapshot(env)
-    position = next(
-        (p for p in snapshot.get("positions", []) if str(p.get("symbol", "")).upper() == symbol),
-        None,
-    )
-    if not position:
-        return redirect(url_for("positions", status="error", message=f"Position {symbol} not found."))
-
-    qty = abs(float(position.get("qty") or 0.0))
-    if qty <= 0:
-        return redirect(url_for("positions", status="error", message=f"Position {symbol} has no quantity to sell."))
-
-    qty = round(qty, 6)
-
-    try:
-        client = _trading_client(env)
-    except Exception as exc:
-        logger.exception("Failed to initialise trading client for sell %s", symbol)
-        return redirect(url_for("positions", status="error", message=f"Unable to sell {symbol}: {exc}"))
-
-    try:
-        req = MarketOrderRequest(
-            symbol=symbol,
-            qty=qty,
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-        )
-        client.submit_order(req)
-    except Exception as exc:
-        logger.exception("Error submitting sell order for %s", symbol)
-        return redirect(url_for("positions", status="error", message=f"Failed to sell {symbol}: {exc}"))
-
-    message = f"Submitted sell order for {symbol} ({qty:.4f} shares)."
-    return redirect(url_for("positions", status="success", message=message))
+    response = {
+        "ok": bool(result.get("ok")),
+        "result": result,
+        "clock": clock,
+        "snapshot": snapshot,
+        "message": message,
+    }
+    return jsonify(response), status_code
 
 
-@app.route("/positions/sell_all", methods=["POST"])
+@app.post("/positions/sell_all")
 def sell_all_positions():
     env = _environment_summary()
-    snapshot = _positions_snapshot(env)
-    positions = [p for p in snapshot.get("positions", []) if abs(float(p.get("qty") or 0.0)) > 0]
+    clock = _safe_clock(env)
+    status_code = 200
 
-    if not positions:
-        return redirect(url_for("positions", status="success", message="No positions to sell."))
-
-    try:
-        client = _trading_client(env)
-    except Exception as exc:
-        logger.exception("Failed to initialise trading client for sell all")
-        return redirect(url_for("positions", status="error", message=f"Unable to sell positions: {exc}"))
-
-    failures: List[str] = []
-    for pos in positions:
-        symbol = str(pos.get("symbol", "")).upper()
-        qty = round(abs(float(pos.get("qty") or 0.0)), 6)
-        if qty <= 0:
-            continue
+    if env.get("simulated"):
+        result: Dict[str, Any] = {"ok": False, "error": "simulation_mode"}
+        message = _sell_failure_message("Sell all: failed — ", None, result, clock)
+    elif not _alpaca_credentials_available():
+        result = {"ok": False, "error": "missing_credentials"}
+        message = _sell_failure_message("Sell all: failed — ", None, result, clock)
+    else:
         try:
-            req = MarketOrderRequest(
-                symbol=symbol,
-                qty=qty,
-                side=OrderSide.SELL,
-                time_in_force=TimeInForce.DAY,
-            )
-            client.submit_order(req)
-        except Exception:
-            logger.exception("Error submitting sell order for %s", symbol)
-            failures.append(symbol)
+            result = alp_close_all_positions(cancel_open_orders=True)
+        except Exception as exc:
+            logger.exception("Error attempting to close all positions")
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    if failures:
-        failed_list = ", ".join(failures)
-        return redirect(
-            url_for(
-                "positions",
-                status="error",
-                message=f"Failed to sell: {failed_list}.",
-            )
-        )
+        if result.get("ok"):
+            statuses = result.get("status") or []
+            count = len(statuses)
+            message = f"Sell all: submitted {count} close request{'s' if count != 1 else ''}."
+            message += _market_status_suffix(clock)
+        else:
+            message = _sell_failure_message("Sell all: failed — ", None, result, clock)
 
-    return redirect(url_for("positions", status="success", message="Submitted sell orders for all positions."))
+    log_payload = {
+        "action": "manual_sell_all",
+        "clock": clock,
+        "result": result,
+        "message": message,
+    }
+    insert_log("ORDER", "manual_sell_all", log_payload)
+
+    snapshot = _positions_snapshot(env)
+    response = {
+        "ok": bool(result.get("ok")),
+        "result": result,
+        "clock": clock,
+        "snapshot": snapshot,
+        "message": message,
+    }
+    return jsonify(response), status_code
 
 
 @app.route("/log")

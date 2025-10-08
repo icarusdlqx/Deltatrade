@@ -37,9 +37,7 @@
           {% endif %}
         </div>
         {% if snapshot.positions %}
-        <form action="{{ url_for('sell_all_positions') }}" method="post" class="mb-0">
-          <button type="submit" class="btn btn-outline-danger btn-sm">Sell all</button>
-        </form>
+        <button type="button" class="btn btn-outline-danger btn-sm js-sell-all">Sell all</button>
         {% endif %}
       </div>
       {% if message %}
@@ -47,6 +45,7 @@
         {{ message }}
       </div>
       {% endif %}
+      <small class="text-muted d-block mb-3">Manual sells are logged to the system Log (success or failure).</small>
       <div class="table-responsive">
         <table class="table table-modern positions-table align-middle mb-0">
           <thead class="text-uppercase small text-muted">
@@ -68,10 +67,7 @@
               <td class="text-end">${{ '%.2f'|format(pos.current_price) }}</td>
               <td class="text-end">${{ '%.2f'|format(pos.market_value) }}</td>
               <td class="text-end">
-                <form action="{{ url_for('sell_position') }}" method="post" class="d-inline">
-                  <input type="hidden" name="symbol" value="{{ pos.symbol }}" />
-                  <button type="submit" class="btn btn-outline-danger btn-sm">Sell</button>
-                </form>
+                <button type="button" class="btn btn-outline-danger btn-sm js-sell" data-symbol="{{ pos.symbol }}">Sell</button>
               </td>
             </tr>
             {% else %}
@@ -85,4 +81,72 @@
     </div>
   </div>
 </div>
+<script>
+async function refreshPositions() {
+  window.location.reload();
+}
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch (err) {
+    data = {};
+  }
+  if (!res.ok) {
+    const err = new Error(data.message || res.statusText || "Request failed");
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+document.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (target.matches(".js-sell")) {
+    const symbol = target.dataset.symbol;
+    if (!symbol) {
+      alert("Sell: missing symbol");
+      return;
+    }
+    target.disabled = true;
+    try {
+      const data = await postJSON("/positions/sell", { symbol });
+      const message = data.message || `Sell ${symbol}: ${data.ok ? "submitted" : "failed"}`;
+      alert(message);
+      await refreshPositions();
+    } catch (error) {
+      const serverMessage = (error.data && error.data.message) || error.message;
+      alert(`Sell ${symbol}: ${serverMessage}`);
+      await refreshPositions();
+    } finally {
+      target.disabled = false;
+    }
+  }
+
+  if (target.matches(".js-sell-all")) {
+    if (!confirm("Close ALL positions? This will submit market orders.")) {
+      return;
+    }
+    target.disabled = true;
+    try {
+      const data = await postJSON("/positions/sell_all");
+      const message = data.message || (data.ok ? "Sell all: submitted" : "Sell all: failed");
+      alert(message);
+      await refreshPositions();
+    } catch (error) {
+      const serverMessage = (error.data && error.data.message) || error.message;
+      alert(`Sell all: ${serverMessage}`);
+      await refreshPositions();
+    } finally {
+      target.disabled = false;
+    }
+  }
+});
+</script>
 {% endblock %}

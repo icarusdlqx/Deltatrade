@@ -40,6 +40,75 @@
       </thead>
       <tbody>
         {% for ep in episodes %}
+        {% if ep.get('level') == 'ORDER' %}
+        {% set payload = ep.get('payload', {}) or {} %}
+        {% set result = payload.get('result', {}) or {} %}
+        {% set clock = payload.get('clock', {}) or {} %}
+        {% set statuses = result.get('status', []) or [] %}
+        {% set action = payload.get('action', '') %}
+        {% if action == 'manual_sell_all' %}
+          {% set action_label = 'Manual sell all' %}
+        {% else %}
+          {% set action_label = 'Manual sell' %}
+        {% endif %}
+        <tr class="align-top table-light">
+          <td>{{ ep.as_of }}</td>
+          <td colspan="11">
+            <div class="d-flex flex-wrap justify-content-between align-items-center mb-1">
+              <div class="fw-semibold">{{ action_label }}</div>
+              <div class="small text-muted">
+                {% if clock.get('is_open') %}
+                  Market open
+                {% elif clock.get('is_open') is not none %}
+                  Market closed{% if clock.get('next_open') %} · next open {{ clock.get('next_open') }}{% endif %}
+                {% else %}
+                  Market status unavailable
+                {% endif %}
+              </div>
+            </div>
+            {% if payload.get('symbol') %}
+            <div class="small mb-1">Symbol: <strong>{{ payload.get('symbol') }}</strong></div>
+            {% endif %}
+            <div class="small">
+              {% if result.get('ok') %}
+                <span class="text-success">Success</span>
+              {% else %}
+                <span class="text-danger">Failed</span>
+              {% endif %}
+              {% if result.get('method') %}
+                · Method: {{ result.get('method') }}
+              {% endif %}
+              {% if result.get('qty') %}
+                · Qty: {{ result.get('qty') }}
+              {% endif %}
+              {% if result.get('error') %}
+                · Error: {{ result.get('error') }}
+              {% endif %}
+              {% if result.get('fallback_error') %}
+                · Fallback: {{ result.get('fallback_error') }}
+              {% endif %}
+            </div>
+            {% if statuses %}
+            <div class="small mt-1">
+              Statuses:
+              {% for status in statuses %}
+                {% if status.get is defined %}
+                  {% set status_symbol = status.get('symbol') %}
+                  {% set status_value = status.get('status') %}
+                {% else %}
+                  {% set status_symbol = status.symbol %}
+                  {% set status_value = status.status %}
+                {% endif %}
+                {{ status_symbol }} ({{ status_value }}){% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </div>
+            {% endif %}
+            {% if payload.get('message') %}
+            <div class="small mt-1">{{ payload.get('message') }}</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
         {% set gate = ep.get('gate', {}) or {} %}
         {% set diag = ep.get('diag', {}) or {} %}
         {% set stage = diag.get('stage', {}) or {} %}
@@ -123,6 +192,7 @@
             <div><span class="text-muted">Exposure |w|:</span> {{ '%.2f'|format(sum_abs|float) }}</div>
           </td>
         </tr>
+        {% endif %}
         {% else %}
         <tr>
           <td colspan="12" class="text-center text-muted py-4">No runs recorded yet.</td>
