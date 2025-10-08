@@ -40,6 +40,58 @@
       </thead>
       <tbody>
         {% for ep in episodes %}
+        {% if ep.level == 'ORDER' %}
+        {% set data = ep.get('data', {}) or {} %}
+        {% set result = data.get('result', {}) or {} %}
+        {% set clock = data.get('clock', {}) or {} %}
+        {% set action = data.get('action', ep.get('kind', 'manual_order')) %}
+        {% set ok = result.get('ok') %}
+        <tr class="table-warning">
+          <td>{{ ep.as_of or ep.timestamp or data.get('timestamp') }}</td>
+          <td colspan="11">
+            <div class="d-flex flex-column gap-1">
+              <div class="fw-semibold {{ 'text-success' if ok else 'text-danger' }}">{{ action.replace('_', ' ')|title }} — {{ 'Success' if ok else 'Failed' }}</div>
+              {% if data.symbol %}
+              <div><span class="text-muted">Symbol:</span> {{ data.symbol }}</div>
+              {% endif %}
+              {% if result.method or result.qty %}
+              <div><span class="text-muted">Method:</span> {{ result.method or 'n/a' }}{% if result.qty %} · qty={{ result.qty }}{% endif %}</div>
+              {% endif %}
+              {% if result.status %}
+              <div><span class="text-muted">Statuses:</span>
+                {% for item in result.status %}
+                  {{ item.symbol }} → {{ item.status }}{% if item.qty %} (qty={{ item.qty }}){% endif %}{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              </div>
+              {% endif %}
+              {% if result.errors %}
+              <div class="text-danger"><span class="text-muted">Errors:</span>
+                {% for item in result.errors %}
+                  {{ item.symbol }} → {{ item.error }}{% if not loop.last %}; {% endif %}
+                {% endfor %}
+              </div>
+              {% elif result.error %}
+              <div class="text-danger"><span class="text-muted">Error:</span> {{ result.error }}</div>
+              {% endif %}
+              {% if result.fallback_error %}
+              <div class="text-muted">Fallback: {{ result.fallback_error }}</div>
+              {% endif %}
+              {% if data.message %}
+              <div>{{ data.message }}</div>
+              {% endif %}
+              {% if clock %}
+              <div class="text-muted small">
+                {% set open_state = clock.get('is_open') %}
+                <span>Market open: {% if open_state is none %}unknown{% elif open_state %}yes{% else %}no{% endif %}</span>
+                {% if clock.get('next_open') %} · next open {{ clock.get('next_open') }}{% endif %}
+                {% if clock.get('next_close') %} · next close {{ clock.get('next_close') }}{% endif %}
+              </div>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% continue %}
+        {% endif %}
         {% set gate = ep.get('gate', {}) or {} %}
         {% set diag = ep.get('diag', {}) or {} %}
         {% set stage = diag.get('stage', {}) or {} %}

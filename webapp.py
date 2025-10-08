@@ -7,6 +7,7 @@ import os
 import logging
 import gevent
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Tuple
@@ -14,11 +15,20 @@ import pytz
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
-from alpaca.trading.client import TradingClient
+from alpaca_client import (
+    close_all_positions as alp_close_all,
+    close_position as alp_close_position,
+    get_account as alp_get_account,
+    get_clock as alp_get_clock,
+    list_positions as alp_list_positions,
+)
+from alpaca.trading.enums import OrderSide, TimeInForce
+from alpaca.trading.requests import MarketOrderRequest
 
 from v2.config import MAX_LOG_ROWS
 from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
+from v2.utils import write_jsonl
 
 # Configure logging for webapp
 logger = logging.getLogger(__name__)
@@ -37,6 +47,20 @@ NAV_ITEMS = [
     {"endpoint": "settings", "label": "Settings", "icon": "bi-sliders"},
     {"endpoint": "logout", "label": "Logout", "icon": "bi-box-arrow-right"},
 ]
+
+
+def insert_log(level: str, kind: str, data: Dict[str, Any]) -> None:
+    try:
+        cfg = get_cfg()
+        record = {
+            "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
+            "level": level,
+            "kind": kind,
+            "data": data,
+        }
+        write_jsonl(cfg.EPISODES_PATH, record)
+    except Exception:
+        logger.exception("Failed to append manual log entry")
 
 
 def _environment_summary() -> Dict[str, Any]:
@@ -236,40 +260,208 @@ def _dashboard_metrics(episodes: List[Dict[str, Any]], total_count: int | None =
     }
 
 
+def _sim_trading_client():
+    from v2.simulated_clients import SimStockHistoricalDataClient, SimTradingClient
+
+    data_client = SimStockHistoricalDataClient()
+    return SimTradingClient(data_client)
+
+
 def _positions_snapshot(env: Dict[str, Any]) -> Dict[str, Any]:
     if env.get("simulated"):
-        from v2.simulated_clients import SimStockHistoricalDataClient, SimTradingClient
-
-        data_client = SimStockHistoricalDataClient()
-        trade_client = SimTradingClient(data_client)
+        trade_client = _sim_trading_client()
         snapshot = trade_client.snapshot()
         snapshot["simulated"] = True
         return snapshot
 
-    if not (os.environ.get("ALPACA_API_KEY") and os.environ.get("ALPACA_SECRET_KEY")):
-        return {"positions": [], "cash": 0.0, "equity": 0.0, "error": "Alpaca credentials not configured.", "simulated": False}
+    if not (
+        (os.environ.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY_V3"))
+        and (os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY_V3"))
+    ):
+        return {
+            "positions": [],
+            "cash": 0.0,
+            "equity": 0.0,
+            "error": "Alpaca credentials not configured.",
+            "simulated": False,
+        }
 
     try:
-        paper = os.environ.get("ALPACA_PAPER", "true").lower() in ("true", "1", "yes", "y")
-        client = TradingClient(os.environ["ALPACA_API_KEY"], os.environ["ALPACA_SECRET_KEY"], paper=paper)
-        positions = []
-        for pos in client.get_all_positions():
-            positions.append({
-                "symbol": pos.symbol,
-                "qty": float(getattr(pos, "qty", getattr(pos, "quantity", 0.0))),
-                "avg_price": float(getattr(pos, "avg_entry_price", 0.0)),
-                "current_price": float(getattr(pos, "current_price", 0.0)),
-                "market_value": float(getattr(pos, "market_value", 0.0)),
-            })
-        account = client.get_account()
+        raw_positions = alp_list_positions()
+        positions: List[Dict[str, Any]] = []
+        for pos in raw_positions:
+            qty_str = pos.get("qty", "0")
+            qty = float(qty_str) if qty_str not in (None, "") else 0.0
+            qty_avail_str = pos.get("qty_available", "0")
+            qty_available = float(qty_avail_str) if qty_avail_str not in (None, "") else 0.0
+            positions.append(
+                {
+                    "symbol": pos.get("symbol", ""),
+                    "qty": qty,
+                    "qty_available": qty_available,
+                    "avg_price": float(pos.get("avg_entry_price", 0.0) or 0.0),
+                    "current_price": float(pos.get("current_price", 0.0) or 0.0),
+                    "market_value": float(pos.get("market_value", 0.0) or 0.0),
+                }
+            )
+        account = alp_get_account()
         return {
             "positions": positions,
-            "cash": float(getattr(account, "cash", 0.0)),
-            "equity": float(getattr(account, "equity", 0.0)),
+            "cash": float(account.get("cash", 0.0) or 0.0),
+            "equity": float(account.get("equity", 0.0) or 0.0),
             "simulated": False,
         }
     except Exception as exc:
-        return {"positions": [], "cash": 0.0, "equity": 0.0, "error": str(exc), "simulated": False}
+        logger.exception("Failed to refresh live positions snapshot")
+        return {
+            "positions": [],
+            "cash": 0.0,
+            "equity": 0.0,
+            "error": str(exc),
+            "simulated": False,
+        }
+
+
+def _round_down_qty(qty: float) -> float:
+    return float(Decimal(str(qty or 0.0)).quantize(Decimal("0.000001"), rounding=ROUND_DOWN))
+
+
+def _resolve_clock(env: Dict[str, Any]) -> Dict[str, Any]:
+    if env.get("simulated"):
+        now = datetime.now(pytz.timezone("US/Eastern"))
+        return {
+            "is_open": True,
+            "next_open": None,
+            "next_close": None,
+            "as_of": now.isoformat(),
+        }
+    try:
+        clock = alp_get_clock()
+        clock["as_of"] = datetime.now(pytz.timezone("US/Eastern")).isoformat()
+        return clock
+    except Exception as exc:
+        logger.exception("Failed to fetch Alpaca market clock")
+        return {"is_open": False, "error": str(exc)}
+
+
+def _sell_simulated_position(symbol: str) -> Dict[str, Any]:
+    client = _sim_trading_client()
+    try:
+        positions = {getattr(p, "symbol", ""): p for p in client.get_all_positions()}
+        pos = positions.get(symbol)
+        if not pos:
+            return {"ok": False, "method": "sim_market_qty", "error": "no_position"}
+        qty = abs(float(getattr(pos, "qty", 0.0) or 0.0))
+        qty = _round_down_qty(qty)
+        if qty <= 0:
+            return {"ok": False, "method": "sim_market_qty", "error": "zero_available"}
+        req = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        order = client.submit_order(req)
+        return {
+            "ok": True,
+            "method": "sim_market_qty",
+            "order_id": getattr(order, "id", None),
+            "qty": qty,
+        }
+    except Exception as exc:
+        logger.exception("Simulation sell failed for %s", symbol)
+        return {"ok": False, "method": "sim_market_qty", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _sell_all_simulated() -> Dict[str, Any]:
+    client = _sim_trading_client()
+    statuses: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for pos in client.get_all_positions():
+        symbol = getattr(pos, "symbol", "")
+        qty = _round_down_qty(abs(float(getattr(pos, "qty", 0.0) or 0.0)))
+        if qty <= 0:
+            continue
+        try:
+            req = MarketOrderRequest(
+                symbol=symbol,
+                qty=qty,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+            )
+            order = client.submit_order(req)
+            statuses.append(
+                {
+                    "symbol": symbol,
+                    "status": "filled",
+                    "order_id": getattr(order, "id", None),
+                    "qty": qty,
+                }
+            )
+        except Exception as exc:
+            logger.exception("Simulation sell-all failed for %s", symbol)
+            errors.append(
+                {
+                    "symbol": symbol,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    if errors:
+        return {"ok": False, "method": "sim_market_qty", "status": statuses, "errors": errors}
+    return {"ok": True, "method": "sim_market_qty", "status": statuses}
+
+
+def _map_error_message(symbol: str | None, result: Dict[str, Any]) -> str:
+    error = str(result.get("error") or "").strip()
+    if not error:
+        return "unknown"
+    if error == "no_position":
+        label = symbol or "requested symbol"
+        return f"Position {label} not found."
+    if error == "zero_available":
+        label = symbol or "requested symbol"
+        return f"No quantity available to sell for {label}."
+    if error == "missing_symbol":
+        return "No symbol provided."
+    return error
+
+
+def _format_sell_message(symbol: str, result: Dict[str, Any], clock: Dict[str, Any]) -> str:
+    if result.get("ok"):
+        method = result.get("method", "n/a")
+        qty = result.get("qty")
+        qty_txt = f" qty={qty}" if qty else ""
+        return f"Sell {symbol}: submitted (method={method}{qty_txt})."
+
+    detail = _map_error_message(symbol, result)
+    fallback = result.get("fallback_error")
+    if fallback and fallback != detail:
+        detail = f"{detail} · Fallback: {fallback}"
+    if not clock.get("is_open", True):
+        next_open = clock.get("next_open")
+        if next_open:
+            detail = f"{detail} Market closed until {next_open}."
+        else:
+            detail = f"{detail} Market closed."
+    return f"Sell {symbol}: failed — {detail}"
+
+
+def _format_sell_all_message(result: Dict[str, Any], clock: Dict[str, Any]) -> str:
+    if result.get("ok"):
+        return "Sell all: submitted."
+
+    detail = _map_error_message(None, result)
+    errors = result.get("errors")
+    if errors:
+        parts = [f"{item.get('symbol')}: {item.get('error')}" for item in errors]
+        detail = "; ".join(parts)
+    if not clock.get("is_open", True):
+        next_open = clock.get("next_open")
+        if next_open:
+            detail = f"{detail} Market closed until {next_open}."
+        else:
+            detail = f"{detail} Market closed."
+    return f"Sell all: failed — {detail}"
 
 
 def _performance_series(episodes: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -343,7 +535,107 @@ def dashboard():
 def positions():
     env = _environment_summary()
     snapshot = _positions_snapshot(env)
-    return render_template("positions.html", snapshot=snapshot, env=env, active_page="positions")
+    message = request.args.get("message")
+    status = request.args.get("status", "success")
+    return render_template(
+        "positions.html",
+        snapshot=snapshot,
+        env=env,
+        active_page="positions",
+        message=message,
+        status=status,
+    )
+
+
+@app.post("/positions/sell")
+def sell_position():
+    env = _environment_summary()
+    payload = request.get_json(silent=True) or {}
+    symbol = ((request.form.get("symbol") if request.form else None) or payload.get("symbol") or "").strip().upper()
+    clock = _resolve_clock(env)
+    if not symbol:
+        result: Dict[str, Any] = {"ok": False, "method": "manual", "error": "missing_symbol"}
+        message = "Sell: failed — No symbol provided."
+    else:
+        if env.get("simulated"):
+            result = _sell_simulated_position(symbol)
+        else:
+            result = alp_close_position(symbol)
+        message = _format_sell_message(symbol, result, clock)
+
+    insert_log(
+        "ORDER",
+        "manual_sell",
+        {
+            "action": "manual_sell",
+            "symbol": symbol,
+            "clock": clock,
+            "result": result,
+            "message": message,
+            "env": {
+                "simulated": env.get("simulated"),
+                "paper": env.get("paper"),
+                "mode_label": env.get("mode_label"),
+            },
+        },
+    )
+
+    snapshot = _positions_snapshot(env)
+    response = {
+        "ok": bool(result.get("ok")) if symbol else False,
+        "result": result,
+        "clock": clock,
+        "message": message,
+        "positions": snapshot.get("positions", []),
+        "simulated": bool(env.get("simulated")),
+    }
+    if not symbol:
+        response["reason"] = "missing_symbol"
+    elif not result.get("ok"):
+        response["reason"] = result.get("error") or result.get("fallback_error")
+    return jsonify(response)
+
+
+@app.post("/positions/sell_all")
+def sell_all_positions():
+    env = _environment_summary()
+    clock = _resolve_clock(env)
+    if env.get("simulated"):
+        result = _sell_all_simulated()
+    else:
+        result = alp_close_all(cancel_open_orders=True)
+    message = _format_sell_all_message(result, clock)
+
+    insert_log(
+        "ORDER",
+        "manual_sell_all",
+        {
+            "action": "manual_sell_all",
+            "clock": clock,
+            "result": result,
+            "message": message,
+            "env": {
+                "simulated": env.get("simulated"),
+                "paper": env.get("paper"),
+                "mode_label": env.get("mode_label"),
+            },
+        },
+    )
+
+    snapshot = _positions_snapshot(env)
+    response = {
+        "ok": bool(result.get("ok")),
+        "result": result,
+        "clock": clock,
+        "message": message,
+        "positions": snapshot.get("positions", []),
+        "simulated": bool(env.get("simulated")),
+    }
+    if not result.get("ok"):
+        response["reason"] = result.get("error") or result.get("fallback_error")
+        if result.get("errors"):
+            response["errors"] = result["errors"]
+    return jsonify(response)
 
 
 @app.route("/log")
