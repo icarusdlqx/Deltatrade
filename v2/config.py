@@ -32,9 +32,8 @@ EVENT_ALPHA_MULT = 1.00
 
 # Optimizer / risk
 ENABLE_VOL_TARGETING = True
-# Treat MAX_POSITIONS as legacy synonym; prefer TARGET_POSITIONS
 TARGET_POSITIONS = int(os.getenv("TARGET_POSITIONS", os.getenv("MAX_POSITIONS", "10")))
-MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", str(TARGET_POSITIONS)))
+MAX_POSITIONS    = int(os.getenv("MAX_POSITIONS", str(TARGET_POSITIONS)))  # legacy synonym
 MAX_WEIGHT_PER_NAME = float(os.getenv("MAX_WEIGHT_PER_NAME", "0.20"))
 TURNOVER_CAP = float(os.getenv("TURNOVER_CAP", "0.35"))
 NAME_MAX = MAX_WEIGHT_PER_NAME

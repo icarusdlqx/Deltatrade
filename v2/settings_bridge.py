@@ -24,7 +24,15 @@ ALLOWED_KEYS = [
 def _normalize_settings(values: Dict[str, Any]) -> Dict[str, Any]:
     data = dict(values or {})
     if "TARGET_POSITIONS" not in data and "MAX_POSITIONS" in data:
-        data["TARGET_POSITIONS"] = data["MAX_POSITIONS"]
+        try:
+            data["TARGET_POSITIONS"] = int(data["MAX_POSITIONS"])
+        except (TypeError, ValueError):
+            data["TARGET_POSITIONS"] = data["MAX_POSITIONS"]
+    if "TARGET_POSITIONS" in data:
+        try:
+            data["TARGET_POSITIONS"] = int(data["TARGET_POSITIONS"])
+        except (TypeError, ValueError):
+            pass
     return data
 
 
