@@ -29,12 +29,24 @@
 
   <div class="col-12 col-xl-8">
     <div class="card card-surface p-4">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-semibold mb-0">Active positions</h5>
-        {% if snapshot.simulated %}
-        <span class="badge bg-info-subtle text-info-emphasis">Simulation</span>
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div class="d-flex align-items-center gap-2">
+          <h5 class="fw-semibold mb-0">Active positions</h5>
+          {% if snapshot.simulated %}
+          <span class="badge bg-info-subtle text-info-emphasis">Simulation</span>
+          {% endif %}
+        </div>
+        {% if snapshot.positions %}
+        <form action="{{ url_for('sell_all_positions') }}" method="post" class="mb-0">
+          <button type="submit" class="btn btn-outline-danger btn-sm">Sell all</button>
+        </form>
         {% endif %}
       </div>
+      {% if message %}
+      <div class="alert alert-{{ 'danger' if status == 'error' else 'success' }}" role="alert">
+        {{ message }}
+      </div>
+      {% endif %}
       <div class="table-responsive">
         <table class="table table-modern positions-table align-middle mb-0">
           <thead class="text-uppercase small text-muted">
@@ -44,6 +56,7 @@
               <th class="text-end">Avg price</th>
               <th class="text-end">Last</th>
               <th class="text-end">Market value</th>
+              <th class="text-end">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -54,10 +67,16 @@
               <td class="text-end">${{ '%.2f'|format(pos.avg_price) }}</td>
               <td class="text-end">${{ '%.2f'|format(pos.current_price) }}</td>
               <td class="text-end">${{ '%.2f'|format(pos.market_value) }}</td>
+              <td class="text-end">
+                <form action="{{ url_for('sell_position') }}" method="post" class="d-inline">
+                  <input type="hidden" name="symbol" value="{{ pos.symbol }}" />
+                  <button type="submit" class="btn btn-outline-danger btn-sm">Sell</button>
+                </form>
+              </td>
             </tr>
             {% else %}
             <tr>
-              <td colspan="5" class="text-center text-muted py-4">No active positions.</td>
+              <td colspan="6" class="text-center text-muted py-4">No active positions.</td>
             </tr>
             {% endfor %}
           </tbody>
