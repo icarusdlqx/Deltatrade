@@ -15,13 +15,13 @@ from . import config as C
 from .config import (
     COST_BPS_PER_1PCT_TURNOVER,
     GROSS_EXPOSURE_FLOOR,
-    MAX_POSITIONS,
     MAX_WEIGHT_PER_NAME,
     MIN_NET_BPS_TO_TRADE as CONFIG_MIN_NET_BPS,
     MIN_ORDER_NOTIONAL as CONFIG_MIN_ORDER_NOTIONAL,
+    TARGET_POSITIONS,
     VOL_TARGET_ANNUAL,
 )
-from .settings_bridge import get_cfg
+from .settings_bridge import get_cfg, get_settings
 from .utils import write_jsonl, read_json, write_json
 from .features import compute_panel, bars_from_multiindex
 from .news import fetch_news_map
@@ -224,6 +224,7 @@ def run_once() -> dict:
     factor_series = factor_component.reindex(candidates).fillna(0.0)
     event_series = event_component.reindex(candidates).fillna(0.0)
     alpha_series = alpha_bps.reindex(candidates).fillna(0.0)
+    ranked_symbols = list(alpha_series.sort_values(ascending=False).index)
     top_scores = alpha_series.sort_values(ascending=False).head(10)
     diag["top_candidates"] = [
         {"symbol": str(sym), "score": float(score)}
@@ -294,10 +295,52 @@ def run_once() -> dict:
 
     target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
 
+    diag_stage = diag.setdefault("stage", {})
+    settings_dict = get_settings()
+    target_slots = int(settings_dict.get("TARGET_POSITIONS", TARGET_POSITIONS))
+    target_slots = max(1, min(10, target_slots))
+    diag_stage["target_positions"] = target_slots
+    nonzero_pre = int(sum(1 for w in target_weights.values() if abs(w) > 1e-6))
+    diag_stage["nonzero_pre_cap"] = nonzero_pre
+
+    if nonzero_pre > target_slots:
+        sorted_nonzero = sorted(
+            ((s, w) for s, w in target_weights.items() if abs(w) > 1e-6),
+            key=lambda kv: abs(kv[1]),
+            reverse=True,
+        )
+        keep_symbols = {s for s, _ in sorted_nonzero[:target_slots]}
+        target_weights = {s: (w if s in keep_symbols else 0.0) for s, w in target_weights.items()}
+
+    try:
+        name_cap = float(getattr(cfg, "NAME_MAX", MAX_WEIGHT_PER_NAME))
+    except Exception:
+        name_cap = float(MAX_WEIGHT_PER_NAME)
+
+    fill_count = 0
+    nonzero_syms = [s for s, w in target_weights.items() if abs(w) > 1e-6]
+    max_fillable = min(target_slots, len(ranked_symbols))
+    if len(nonzero_syms) < max_fillable:
+        need = max(0, target_slots - len(nonzero_syms))
+        fill_candidates = [
+            sym for sym in ranked_symbols if abs(target_weights.get(sym, 0.0)) <= 1e-6
+        ][:need]
+        if fill_candidates:
+            current_gross = sum(abs(w) for w in target_weights.values())
+            target_gross = min(1.0, max(GROSS_EXPOSURE_FLOOR, current_gross))
+            available = max(0.0, target_gross - current_gross)
+            per_weight = min(name_cap, available / max(len(fill_candidates), 1))
+            for sym in fill_candidates:
+                if sym not in target_weights:
+                    target_weights[sym] = 0.0
+                if abs(target_weights.get(sym, 0.0)) <= 1e-6:
+                    target_weights[sym] = max(0.0, min(per_weight, name_cap))
+                fill_count += 1
+
     active_weights = {s: w for s, w in target_weights.items() if abs(w) > 1e-6}
-    if isinstance(active_weights, dict) and len(active_weights) > MAX_POSITIONS:
+    if isinstance(active_weights, dict) and len(active_weights) > target_slots:
         sorted_active = sorted(active_weights.items(), key=lambda kv: abs(kv[1]), reverse=True)
-        active_weights = dict(sorted_active[:MAX_POSITIONS])
+        active_weights = dict(sorted_active[:target_slots])
 
     gross = sum(abs(w) for w in active_weights.values())
     if gross > 0 and gross < GROSS_EXPOSURE_FLOOR:
@@ -305,8 +348,7 @@ def run_once() -> dict:
         active_weights = {s: w * scale for s, w in active_weights.items()}
 
         try:
-            max_name_cap = float(getattr(cfg, "NAME_MAX", MAX_WEIGHT_PER_NAME))
-            active_weights = {s: max(min(w, max_name_cap), 0.0) for s, w in active_weights.items()}
+            active_weights = {s: max(min(w, name_cap), 0.0) for s, w in active_weights.items()}
             gross2 = sum(abs(w) for w in active_weights.values())
             if gross2 > 1.0 and gross2 > 0:
                 active_weights = {s: w / gross2 for s, w in active_weights.items()}
@@ -314,9 +356,16 @@ def run_once() -> dict:
             pass
 
     target_weights = {s: active_weights.get(s, 0.0) for s in target_weights.keys()}
-    diag_stage = diag.setdefault("stage", {})
-    diag_stage["gross_after_floor"] = round(sum(abs(w) for w in active_weights.values()), 4)
-    diag_stage["names_after_cap"] = int(len([w for w in active_weights.values() if abs(w) > 1e-6]))
+    gross_final = sum(abs(w) for w in target_weights.values())
+    if gross_final > 1.0 and gross_final > 0:
+        target_weights = {s: w / gross_final for s, w in target_weights.items()}
+        gross_final = sum(abs(w) for w in target_weights.values())
+
+    diag_stage["nonzero_post_cap"] = int(sum(1 for w in target_weights.values() if abs(w) > 1e-6))
+    diag_stage["fill_count"] = int(fill_count)
+    diag_stage["gross_final"] = round(gross_final, 4)
+    diag_stage["gross_after_floor"] = diag_stage["gross_final"]
+    diag_stage["names_after_cap"] = diag_stage["nonzero_post_cap"]
 
     w_final = np.array([target_weights.get(s, 0.0) for s in candidates], dtype=float)
 

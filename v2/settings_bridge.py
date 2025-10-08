@@ -20,6 +20,25 @@ ALLOWED_KEYS = [
     "ATR_STOP_MULT","TAKE_PROFIT_ATR","TIME_STOP_DAYS",
 ]
 
+
+def _normalize_settings(values: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(values or {})
+    if "TARGET_POSITIONS" not in data and "MAX_POSITIONS" in data:
+        data["TARGET_POSITIONS"] = data["MAX_POSITIONS"]
+    return data
+
+
+def _coerce_settings(values: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(values)
+    tw = data.get("TRADING_WINDOWS_ET")
+    if isinstance(tw, str):
+        data["TRADING_WINDOWS_ET"] = [x.strip() for x in tw.split(",") if x.strip()]
+    sw = data.get("SLEEVE_WEIGHTS")
+    if isinstance(sw, dict):
+        total = sum(max(0.0, float(v)) for v in sw.values()) or 1.0
+        data["SLEEVE_WEIGHTS"] = {k: max(0.0, float(v)) / total for k, v in sw.items()}
+    return data
+
 def _defaults() -> Dict[str, Any]:
     return {k: getattr(C, k) for k in dir(C) if k.isupper()}
 
@@ -30,7 +49,8 @@ def load_overrides() -> Dict[str, Any]:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return {k: raw[k] for k in ALLOWED_KEYS if k in raw}
+    filtered = {k: raw[k] for k in ALLOWED_KEYS if k in raw}
+    return _normalize_settings(filtered)
 
 def save_overrides(new_vals: Dict[str, Any]) -> None:
     p = Path(C.SETTINGS_OVERRIDES_PATH)
@@ -39,13 +59,14 @@ def save_overrides(new_vals: Dict[str, Any]) -> None:
     cur.update({k: new_vals[k] for k in new_vals if k in ALLOWED_KEYS})
     p.write_text(json.dumps(cur, indent=2), encoding="utf-8")
 
+
+def get_settings() -> Dict[str, Any]:
+    defaults = _defaults()
+    overrides = load_overrides()
+    defaults.update(overrides)
+    return _coerce_settings(defaults)
+
+
 def get_cfg() -> SimpleNamespace:
-    d = _defaults()
-    ov = load_overrides()
-    if "TRADING_WINDOWS_ET" in ov and isinstance(ov["TRADING_WINDOWS_ET"], str):
-        ov["TRADING_WINDOWS_ET"] = [x.strip() for x in ov["TRADING_WINDOWS_ET"].split(",") if x.strip()]
-    if "SLEEVE_WEIGHTS" in ov and isinstance(ov["SLEEVE_WEIGHTS"], dict):
-        s = sum(max(0.0, float(v)) for v in ov["SLEEVE_WEIGHTS"].values()) or 1.0
-        ov["SLEEVE_WEIGHTS"] = {k: max(0.0, float(v))/s for k,v in ov["SLEEVE_WEIGHTS"].items()}
-    d.update(ov)
-    return SimpleNamespace(**d)
+    settings = get_settings()
+    return SimpleNamespace(**settings)

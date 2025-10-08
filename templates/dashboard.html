@@ -121,10 +121,12 @@
         <dd class="col-6">{{ stage.get('candidates_topN', 0) }}</dd>
         <dt class="col-6 text-muted">Optimizer nonzero</dt>
         <dd class="col-6">{{ stage.get('optimizer_nonzero', 0) }}</dd>
+        <dt class="col-6 text-muted">Target slots</dt>
+        <dd class="col-6">K {{ stage.get('target_positions', 0) }} · pre {{ stage.get('nonzero_pre_cap', stage.get('optimizer_nonzero', 0)) }} · post {{ stage.get('nonzero_post_cap', 0) }} · fill {{ stage.get('fill_count', 0) }} · gross {{ '%.2f'|format((stage.get('gross_final', 0) or 0)|float) }}</dd>
         <dt class="col-6 text-muted">Event scored</dt>
         <dd class="col-6">{{ stage.get('event_scored', 0) }}</dd>
         <dt class="col-6 text-muted">Filters removed</dt>
-        <dd class="col-6">min {{ filters.get('min_notional_removed', 0) }}, turnover {{ filters.get('turnover_cap_removed', 0) }}, target {{ filters.get('already_at_target_removed', 0) }}</dd>
+        <dd class="col-6">min {{ filters.get('min_notional_removed', 0) }}, turnover {{ filters.get('turnover_cap_removed', 0) }}, target_removed {{ filters.get('already_at_target_removed', 0) }}</dd>
         <dt class="col-6 text-muted">Exposure |w|</dt>
         <dd class="col-6">{{ '%.2f'|format((exposure_diag.get('sum_abs_weights') or 0)|float) }}</dd>
       </dl>

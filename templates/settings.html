@@ -71,7 +71,7 @@
           </div>
           <div class="col-md-3">
             <div class="form-floating">
-              <input type="number" class="form-control" id="TARGET_POSITIONS" name="TARGET_POSITIONS" value="{{ cfg.TARGET_POSITIONS }}">
+              <input type="number" min="1" max="10" class="form-control" id="TARGET_POSITIONS" name="TARGET_POSITIONS" value="{{ cfg.TARGET_POSITIONS or 10 }}">
               <label for="TARGET_POSITIONS">Target positions</label>
             </div>
           </div>
