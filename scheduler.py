@@ -1,3 +1,11 @@
+# --- START CODEX PATCH HOOK (cost model & gate) ---
+try:
+    from v2.codex_patch import apply as _codex_apply
+    _codex_apply()
+except Exception as _e:
+    print("[codex_patch] not applied:", _e)
+# --- END CODEX PATCH HOOK ---
+
 from __future__ import annotations
 import os, time, signal
 import pytz
