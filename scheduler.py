@@ -1,9 +1,21 @@
-# --- START CODEX PATCH HOOK (cost model & gate) ---
+# --- START CODEX PATCH HOOK (schedule + actions + LLM) ---
+import os
+_codex_apply = None
 try:
-    from v2.codex_patch import apply as _codex_apply
+    from v2.codex_patch_v2 import apply as _codex_apply
+except Exception:
+    try:
+        from v2.codex_patch import apply as _codex_apply  # fallback to prior patch if present
+    except Exception:
+        _codex_apply = None
+if _codex_apply:
     _codex_apply()
+try:
+    if os.getenv("RUN_LLM_SMOKE", "1") == "1":
+        from v2.llm_client import smoke_test as _llm_smoke
+        _llm_smoke()
 except Exception as _e:
-    print("[codex_patch] not applied:", _e)
+    print("[codex] LLM smoke test skipped:", _e)
 # --- END CODEX PATCH HOOK ---
 
 from __future__ import annotations
