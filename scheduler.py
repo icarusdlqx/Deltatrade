@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # --- START CODEX PATCH HOOK (schedule + actions + LLM) ---
 import os
 _codex_apply = None
@@ -17,8 +19,6 @@ try:
 except Exception as _e:
     print("[codex] LLM smoke test skipped:", _e)
 # --- END CODEX PATCH HOOK ---
-
-from __future__ import annotations
 import os, time, signal
 import pytz
 from datetime import datetime
