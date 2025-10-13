@@ -262,6 +262,7 @@ def run_once() -> dict:
     cur_mv_map, equity_prev, last_prices_live = _current_positions(trade_client)
     invested_prev = sum(abs(v) for v in cur_mv_map.values()) or 1.0
     w_prev = np.array([cur_mv_map.get(s, 0.0) for s in candidates], dtype=float) / invested_prev
+    has_positions = any(abs(v) > 1e-6 for v in cur_mv_map.values())
 
     # Sector caps (optional via CSV)
     sec_map = _sector_map_from_csv()
@@ -304,6 +305,7 @@ def run_once() -> dict:
             w_scaled = w_fb
             fallback_used = True
     diag_stage = diag.setdefault("stage", {})
+    diag_stage["has_positions"] = bool(has_positions)
     diag_stage["fallback_used"] = bool(diag_stage.get("fallback_used")) or fallback_used
     diag_stage["optimizer_nonzero"] = int(np.sum(np.abs(w_scaled) > 1e-6))
 
@@ -373,6 +375,8 @@ def run_once() -> dict:
     equity = float(account.equity)
     investable = equity * (1 - float(cfg.CASH_BUFFER))
     cur_mv_all = {p.symbol: float(p.market_value) for p in trade_client.get_all_positions()}
+    has_positions = has_positions or any(abs(v) > 1e-6 for v in cur_mv_all.values())
+    diag_stage["has_positions"] = bool(has_positions)
     targets = {s: float(target_weights.get(s, 0.0) * investable) for s in candidates}
     # Ensure symbols trimmed from the active book head towards zero exposure
     for s in list(cur_mv_all.keys()):
@@ -431,6 +435,7 @@ def run_once() -> dict:
         }
     min_order_notional = float(getattr(cfg, "MIN_ORDER_NOTIONAL", CONFIG_MIN_ORDER_NOTIONAL))
     min_net_bps_to_trade = float(getattr(cfg, "MIN_NET_BPS_TO_TRADE", CONFIG_MIN_NET_BPS))
+    cost_gate_enabled = bool(getattr(cfg, "ENABLE_COST_GATE", True))
     turnover_cap = float(getattr(cfg, "TURNOVER_CAP", 0.0) or 0.0)
 
     # Build order plans (always do this if we have targets, especially for onboarding)
@@ -526,14 +531,16 @@ def run_once() -> dict:
     avg_ticket = (est_dollars / len(planned_orders)) if planned_orders else 0.0
     diag_stage["avg_ticket_notional"] = round(avg_ticket, 2) if planned_orders else 0.0
 
-    passes_net = (net_bps >= min_net_bps_to_trade)
-    force_onboard = (cash_frac >= 0.90) and (len(planned_orders) > 0)
-    proceed = (len(planned_orders) > 0) and (passes_net or force_onboard)
+    passes_net = True if not cost_gate_enabled else (net_bps >= min_net_bps_to_trade)
+    force_onboard = (len(planned_orders) > 0) and ((cash_frac >= 0.90) or (not has_positions))
+    if force_onboard:
+        passes_net = True
+    proceed = (len(planned_orders) > 0) and passes_net
 
     reasons: List[str] = []
     if len(planned_orders) == 0:
         reasons.append("no_orders")
-    if not passes_net:
+    if cost_gate_enabled and not passes_net:
         reasons.append("net_below_min")
     if force_onboard:
         reasons.append("onboarding")
@@ -613,6 +620,7 @@ def run_once() -> dict:
         "net_bps": float(net_bps),
         "min_notional": float(min_order_notional),
         "min_net_bps": float(min_net_bps_to_trade),
+        "cost_gate_enabled": bool(cost_gate_enabled),
         "proceed": bool(proceed),
         "proceed_final": bool(proceed_final),
         "reasons": list(reasons),
@@ -623,6 +631,7 @@ def run_once() -> dict:
         "regime": regime,
         "turnover_cap": float(turnover_cap),
         "reason_primary": gate_reason,
+        "has_positions": bool(has_positions),
     }
 
     try:
