@@ -9,6 +9,8 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
+from .event_gate import record_assessment
+
 class EventScore(BaseModel):
     symbol: str
     direction: int = Field(description="-1 short, 0 neutral, +1 long")
@@ -113,6 +115,7 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
             out[sym] = 0.0
     if meta.get("called"):
         meta["tokens"] = total_tokens
+        record_assessment()
         log.info(
             "llm_call",
             extra={

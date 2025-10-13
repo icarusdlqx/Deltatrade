@@ -3,23 +3,10 @@ Hook into v2.agents to ensure all event scoring goes through llm_client.chat_jso
 and to record the timestamp of the last successful assessment.
 """
 from __future__ import annotations
-import importlib, json
-from pathlib import Path
-from datetime import datetime, timezone
+import importlib
 from typing import Callable
 
-LAST_FILE = Path("data/last_event_assessment.json")
-LAST_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-def _save_last_ok():
-    LAST_FILE.write_text(json.dumps({"ts_iso": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
-
-def _load_last_ok():
-    if not LAST_FILE.exists(): return None
-    try:
-        return json.loads(LAST_FILE.read_text()).get("ts_iso")
-    except Exception:
-        return None
+from .event_gate import record_assessment, load_last_assessment_iso
 
 def _wrap_event_scorer(agents_mod) -> int:
     from .llm_client import chat_json
@@ -34,7 +21,7 @@ def _wrap_event_scorer(agents_mod) -> int:
                     if "text" in k or (a and isinstance(a[0], str)):
                         user_text = k.get("text") or a[0]
                         res = chat_json(user_text)
-                        _save_last_ok()
+                        record_assessment()
                         return res
                     return fn(*a, **k)
                 return f
@@ -52,7 +39,7 @@ def _wrap_event_scorer(agents_mod) -> int:
                         if "text" in k or (a and isinstance(a[0], str)):
                             user_text = k.get("text") or a[0]
                             res = chat_json(user_text)
-                            _save_last_ok()
+                            record_assessment()
                             return res
                         return fn(self, *a, **k)
                     return f
@@ -62,7 +49,7 @@ def _wrap_event_scorer(agents_mod) -> int:
     return patched
 
 def last_ok_iso():
-    return _load_last_ok()
+    return load_last_assessment_iso()
 
 def apply():
     try:
