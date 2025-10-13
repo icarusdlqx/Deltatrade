@@ -1,4 +1,12 @@
+# --- START LLM BOOTSTRAP (prompt+logging+smoke+guard) ---
 from __future__ import annotations
+
+try:
+    from v2.codex_bootstrap_llm import apply as _codex_apply_llm
+    _codex_apply_llm()
+except Exception as _e:
+    print("[codex] LLM bootstrap not applied:", _e)
+# --- END LLM BOOTSTRAP ---
 
 # --- START CODEX PATCH HOOK (schedule + actions + LLM) ---
 import os
