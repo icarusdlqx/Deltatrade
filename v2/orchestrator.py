@@ -1,4 +1,16 @@
 from __future__ import annotations
+
+# --- START pre-trade assessment guard (optional) ---
+try:
+    from v2.pretrade_guard import must_have_recent_event_assessment as _must_have_event
+    if not _must_have_event():
+        print("[orchestrator] Skipping run: no recent LLM event assessment.")
+        raise SystemExit(0)
+except SystemExit:
+    raise
+except Exception as _e:
+    print("[orchestrator] Event assessment guard error:", _e)
+# --- END guard ---
 import os, time, logging
 from datetime import datetime, timedelta, timezone
 import pytz
