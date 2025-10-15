@@ -36,13 +36,24 @@ This is an autonomous, event-aware, risk-targeted trading system that:
 - **Port**: 5000 (configured for Replit proxy)
 - **Host**: 0.0.0.0 (allows access through Replit's iframe proxy)
 
-## API Keys (Optional)
-The application can run with or without API keys:
-- **With keys**: Live/paper trading with Alpaca
-- **Without keys**: Simulated mode for testing and development
-- Required: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `OPENAI_API_KEY`
+## API Keys
+✅ **Configured and Working:**
+- `ALPACA_API_KEY` - Connected to Alpaca paper trading account
+- `ALPACA_SECRET_KEY` - Authenticated successfully
+- `OPENAI_API_KEY` - GPT analysis enabled
 
-## Recent Changes (2025-09-24)
+**Current Mode:** Paper Trading (Alpaca account synced)
+
+## Recent Changes
+**2025-10-15:**
+- ✅ Fixed `from __future__ import annotations` syntax errors in webapp.py and scheduler.py
+- ✅ Configured Alpaca API keys (paper trading account)
+- ✅ Configured OpenAI API key for GPT analysis
+- ✅ Connected to live Alpaca paper account (Equity: $10,170)
+- ✅ Verified automatic balance sync - system uses real Alpaca equity for position sizing
+- ✅ All services running: web dashboard + automated scheduler
+
+**2025-09-24:**
 - Configured Flask app to use port 5000 instead of 8000
 - Modified scheduler.py to handle missing API keys gracefully  
 - Set up Replit workflow to run scheduler + web app together

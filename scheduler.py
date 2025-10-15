@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # --- START CODEX PATCH HOOK v3 (LLM failover + abs risk + dyn cost) ---
 try:
     from v2.codex_patch_v3 import apply as _codex_apply_v3
@@ -13,7 +15,6 @@ except Exception as _e:
 # --- END CODEX PATCH HOOK v3 ---
 
 # --- START LLM BOOTSTRAP (prompt+logging+smoke+guard) ---
-from __future__ import annotations
 
 try:
     from v2.codex_bootstrap_llm import apply as _codex_apply_llm

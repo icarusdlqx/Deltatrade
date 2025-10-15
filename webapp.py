@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # --- START CODEX PATCH HOOK v3 (LLM failover + abs risk + dyn cost) ---
 try:
     from v2.codex_patch_v3 import apply as _codex_apply_v3
@@ -5,8 +7,6 @@ try:
 except Exception as _e:
     print("[codex_v3] not applied:", _e)
 # --- END CODEX PATCH HOOK v3 ---
-
-from __future__ import annotations
 
 # --- START CODEX PATCH HOOK (schedule + actions + LLM) ---
 import os
