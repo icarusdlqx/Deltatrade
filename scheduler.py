@@ -1,3 +1,17 @@
+# --- START CODEX PATCH HOOK v3 (LLM failover + abs risk + dyn cost) ---
+try:
+    from v2.codex_patch_v3 import apply as _codex_apply_v3
+    _codex_apply_v3()
+    # Smoke test so you can see token usage immediately
+    try:
+        from v2.llm_client import smoke_test as _llm_smoke
+        _llm_smoke()
+    except Exception as _e:
+        print("[codex_v3] LLM smoke skipped:", _e)
+except Exception as _e:
+    print("[codex_v3] not applied:", _e)
+# --- END CODEX PATCH HOOK v3 ---
+
 # --- START LLM BOOTSTRAP (prompt+logging+smoke+guard) ---
 from __future__ import annotations
 
