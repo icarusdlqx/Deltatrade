@@ -2,294 +2,357 @@
 
 {% block title %}Settings · Deltatrade{% endblock %}
 {% block header_title %}Strategy settings{% endblock %}
+{% block header_lead %}
+<p class="page-subtitle">Tune automation, data inputs, and risk guardrails using plain-language controls. Every field includes a simple explanation of how it affects trading.</p>
+{% endblock %}
 
 {% block content %}
 <form method="post" class="settings-form">
   <div class="row g-4">
-    <div class="col-12 col-xl-4">
-      <div class="card card-surface p-4 h-100">
-        <h5 class="fw-semibold mb-3">Automation</h5>
-        <div class="form-check form-switch mb-2">
+    <div class="col-12 col-xxl-4">
+      <div class="setting-card h-100">
+        <h5 class="fw-semibold mb-3">Automation &amp; safety</h5>
+        <p>Toggle how hands-off the system should be and whether the AI can place real orders.</p>
+        <div class="form-check form-switch setting-toggle">
+          <div>
+            <label class="form-check-label fw-semibold" for="AUTOMATION_ENABLED">Auto-run trading cycles</label>
+            <div class="setting-help">Let Deltatrade fire on its schedule without manual start.</div>
+          </div>
           <input class="form-check-input" type="checkbox" id="AUTOMATION_ENABLED" name="AUTOMATION_ENABLED" {% if cfg.AUTOMATION_ENABLED %}checked{% endif %}>
-          <label class="form-check-label" for="AUTOMATION_ENABLED">Scheduler enabled</label>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch setting-toggle">
+          <div>
+            <label class="form-check-label fw-semibold" for="DRY_RUN">Paper check only (no orders)</label>
+            <div class="setting-help">Keep analysis and logging but skip order placement.</div>
+          </div>
           <input class="form-check-input" type="checkbox" id="DRY_RUN" name="DRY_RUN" {% if cfg.DRY_RUN %}checked{% endif %}>
-          <label class="form-check-label" for="DRY_RUN">Dry-run mode</label>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch setting-toggle">
+          <div>
+            <label class="form-check-label fw-semibold" for="ENABLE_COST_GATE">Block trades with low edge</label>
+            <div class="setting-help">Skip trades when expected alpha doesn’t beat costs.</div>
+          </div>
           <input class="form-check-input" type="checkbox" id="ENABLE_COST_GATE" name="ENABLE_COST_GATE" {% if cfg.ENABLE_COST_GATE %}checked{% endif %}>
-          <label class="form-check-label" for="ENABLE_COST_GATE">Cost gate</label>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch setting-toggle">
+          <div>
+            <label class="form-check-label fw-semibold" for="ENABLE_EVENT_SCORE">Use AI news reader</label>
+            <div class="setting-help">Blend AI-scored headlines into each symbol’s alpha.</div>
+          </div>
           <input class="form-check-input" type="checkbox" id="ENABLE_EVENT_SCORE" name="ENABLE_EVENT_SCORE" {% if cfg.ENABLE_EVENT_SCORE %}checked{% endif %}>
-          <label class="form-check-label" for="ENABLE_EVENT_SCORE">AI news scoring</label>
         </div>
-        <div class="form-check form-switch mb-2">
+        <div class="form-check form-switch setting-toggle">
+          <div>
+            <label class="form-check-label fw-semibold" for="ENABLE_VOL_TARGETING">Target consistent volatility</label>
+            <div class="setting-help">Automatically scale the book to hit the volatility target.</div>
+          </div>
           <input class="form-check-input" type="checkbox" id="ENABLE_VOL_TARGETING" name="ENABLE_VOL_TARGETING" {% if cfg.ENABLE_VOL_TARGETING %}checked{% endif %}>
-          <label class="form-check-label" for="ENABLE_VOL_TARGETING">Vol targeting</label>
         </div>
       </div>
     </div>
 
-    <div class="col-12 col-xl-8">
-      <div class="card card-surface p-4 mb-4">
-        <h5 class="fw-semibold mb-3">Trading windows & universe</h5>
-        <div class="row g-3">
+    <div class="col-12 col-xxl-8">
+      <div class="setting-card mb-4">
+        <h5 class="fw-semibold mb-3">Trading schedule &amp; universe</h5>
+        <div class="row g-4">
           <div class="col-md-6">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="TRADING_WINDOWS_ET">Trading windows (ET)</label>
               <input type="text" class="form-control" id="TRADING_WINDOWS_ET" name="TRADING_WINDOWS_ET" value="{{ cfg.TRADING_WINDOWS_ET|join(', ') }}">
-              <label for="TRADING_WINDOWS_ET">Trading windows (ET)</label>
+              <div class="setting-help">Times to kick off each run, e.g. <code>10:00, 13:30</code>.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="WINDOW_TOL_MIN">Window flex (min)</label>
               <input type="number" class="form-control" id="WINDOW_TOL_MIN" name="WINDOW_TOL_MIN" value="{{ cfg.WINDOW_TOL_MIN }}">
-              <label for="WINDOW_TOL_MIN">Window tolerance (min)</label>
+              <div class="setting-help">Minutes of tolerance around each start time.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="AVOID_NEAR_CLOSE_MIN">Avoid close (min)</label>
               <input type="number" class="form-control" id="AVOID_NEAR_CLOSE_MIN" name="AVOID_NEAR_CLOSE_MIN" value="{{ cfg.AVOID_NEAR_CLOSE_MIN }}">
-              <label for="AVOID_NEAR_CLOSE_MIN">Avoid close (min)</label>
+              <div class="setting-help">Skip runs this many minutes before the bell.</div>
             </div>
           </div>
           <div class="col-md-6">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="UNIVERSE_MODE">Universe selection</label>
               <select class="form-select" id="UNIVERSE_MODE" name="UNIVERSE_MODE">
-                <option value="etfs_only" {% if cfg.UNIVERSE_MODE == 'etfs_only' %}selected{% endif %}>ETF core</option>
-                <option value="sp500_etfs" {% if cfg.UNIVERSE_MODE == 'sp500_etfs' %}selected{% endif %}>S&P 500 + ETF overlay</option>
+                <option value="etfs_only" {% if cfg.UNIVERSE_MODE == 'etfs_only' %}selected{% endif %}>ETF core (broad market only)</option>
+                <option value="sp500_etfs" {% if cfg.UNIVERSE_MODE == 'sp500_etfs' %}selected{% endif %}>S&amp;P 500 plus ETF overlay</option>
               </select>
-              <label for="UNIVERSE_MODE">Universe mode</label>
+              <div class="setting-help">Choose the investable list for signal generation.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="UNIVERSE_MAX">Universe cap</label>
               <input type="number" class="form-control" id="UNIVERSE_MAX" name="UNIVERSE_MAX" value="{{ cfg.UNIVERSE_MAX }}">
-              <label for="UNIVERSE_MAX">Universe cap</label>
+              <div class="setting-help">Upper limit on tickers pulled each run.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
-              <input type="number" min="1" max="10" class="form-control" id="TARGET_POSITIONS" name="TARGET_POSITIONS" value="{{ cfg.TARGET_POSITIONS or 10 }}">
-              <label for="TARGET_POSITIONS">Target positions</label>
+            <div class="setting-field">
+              <label class="setting-label" for="TARGET_POSITIONS">Target positions</label>
+              <input type="number" min="1" max="50" class="form-control" id="TARGET_POSITIONS" name="TARGET_POSITIONS" value="{{ cfg.TARGET_POSITIONS or 10 }}">
+              <div class="setting-help">Preferred number of holdings after optimization.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="DATA_LOOKBACK_DAYS">Data lookback (days)</label>
               <input type="number" class="form-control" id="DATA_LOOKBACK_DAYS" name="DATA_LOOKBACK_DAYS" value="{{ cfg.DATA_LOOKBACK_DAYS }}">
-              <label for="DATA_LOOKBACK_DAYS">Data lookback days</label>
+              <div class="setting-help">How many days of pricing history to load.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="MIN_BARS">Minimum bars</label>
               <input type="number" class="form-control" id="MIN_BARS" name="MIN_BARS" value="{{ cfg.MIN_BARS }}">
-              <label for="MIN_BARS">Minimum bars</label>
+              <div class="setting-help">Require at least this many price bars per symbol.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="CASH_BUFFER">Cash buffer (%)</label>
               <input type="number" step="0.01" class="form-control" id="CASH_BUFFER" name="CASH_BUFFER" value="{{ cfg.CASH_BUFFER }}">
-              <label for="CASH_BUFFER">Cash buffer</label>
+              <div class="setting-help">Leave this fraction of equity in cash.</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="card card-surface p-4 mb-4">
-        <h5 class="fw-semibold mb-3">Factor & event inputs</h5>
-        <div class="row g-3">
+      <div class="setting-card mb-4">
+        <h5 class="fw-semibold mb-3">Signals &amp; AI inputs</h5>
+        <div class="row g-4">
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="RESID_MOM_LOOKBACK">Momentum window (days)</label>
               <input type="number" class="form-control" id="RESID_MOM_LOOKBACK" name="RESID_MOM_LOOKBACK" value="{{ cfg.RESID_MOM_LOOKBACK }}">
-              <label for="RESID_MOM_LOOKBACK">Residual lookback</label>
+              <div class="setting-help">Days used for residual momentum scoring.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="TREND_FAST">Fast trend (days)</label>
               <input type="number" class="form-control" id="TREND_FAST" name="TREND_FAST" value="{{ cfg.TREND_FAST }}">
-              <label for="TREND_FAST">Trend fast</label>
+              <div class="setting-help">Short moving average horizon.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="TREND_SLOW">Slow trend (days)</label>
               <input type="number" class="form-control" id="TREND_SLOW" name="TREND_SLOW" value="{{ cfg.TREND_SLOW }}">
-              <label for="TREND_SLOW">Trend slow</label>
+              <div class="setting-help">Long moving average horizon.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="REVERSAL_DAYS">Mean reversion (days)</label>
               <input type="number" class="form-control" id="REVERSAL_DAYS" name="REVERSAL_DAYS" value="{{ cfg.REVERSAL_DAYS }}">
-              <label for="REVERSAL_DAYS">Reversal days</label>
+              <div class="setting-help">Lookback for short-term reversals.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="WINSOR_PCT">Winsor percentile</label>
               <input type="number" step="0.01" class="form-control" id="WINSOR_PCT" name="WINSOR_PCT" value="{{ cfg.WINSOR_PCT }}">
-              <label for="WINSOR_PCT">Winsor percentile</label>
+              <div class="setting-help">Clamp extremes to keep signals stable.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="NEWS_LOOKBACK_DAYS">News lookback (days)</label>
               <input type="number" class="form-control" id="NEWS_LOOKBACK_DAYS" name="NEWS_LOOKBACK_DAYS" value="{{ cfg.NEWS_LOOKBACK_DAYS }}">
-              <label for="NEWS_LOOKBACK_DAYS">News lookback</label>
+              <div class="setting-help">How far back to fetch headlines for scoring.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="EVENT_TOP_K">News breadth (top K)</label>
               <input type="number" class="form-control" id="EVENT_TOP_K" name="EVENT_TOP_K" value="{{ cfg.EVENT_TOP_K }}">
-              <label for="EVENT_TOP_K">News breadth (top K)</label>
+              <div class="setting-help">Number of symbols sent to the AI each run.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="EVENT_ALPHA_MULT">News impact multiplier</label>
               <input type="number" step="0.1" class="form-control" id="EVENT_ALPHA_MULT" name="EVENT_ALPHA_MULT" value="{{ cfg.EVENT_ALPHA_MULT }}">
-              <label for="EVENT_ALPHA_MULT">Event alpha multiplier</label>
+              <div class="setting-help">Scale applied to AI event alpha before blending.</div>
             </div>
           </div>
           <div class="col-md-6">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="SLEEVE_XSEC">Factor sleeve weight</label>
               <input type="number" step="0.01" class="form-control" id="SLEEVE_XSEC" name="SLEEVE_XSEC" value="{{ cfg.SLEEVE_WEIGHTS.get('xsec', 0) }}">
-              <label for="SLEEVE_XSEC">Cross-section sleeve weight</label>
+              <div class="setting-help">Share of the score reserved for systematic factors.</div>
             </div>
           </div>
           <div class="col-md-6">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="SLEEVE_EVENT">Event sleeve weight</label>
               <input type="number" step="0.01" class="form-control" id="SLEEVE_EVENT" name="SLEEVE_EVENT" value="{{ cfg.SLEEVE_WEIGHTS.get('event', 0) }}">
-              <label for="SLEEVE_EVENT">Event sleeve weight</label>
+              <div class="setting-help">Share of the score driven by AI news signals.</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="card card-surface p-4 mb-4">
-        <h5 class="fw-semibold mb-3">Risk & optimization</h5>
-        <div class="row g-3">
+      <div class="setting-card mb-4">
+        <h5 class="fw-semibold mb-3">Risk &amp; optimization</h5>
+        <div class="row g-4">
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="TARGET_PORTFOLIO_VOL">Target volatility</label>
               <input type="number" step="0.01" class="form-control" id="TARGET_PORTFOLIO_VOL" name="TARGET_PORTFOLIO_VOL" value="{{ cfg.TARGET_PORTFOLIO_VOL }}">
-              <label for="TARGET_PORTFOLIO_VOL">Target volatility</label>
+              <div class="setting-help">Annualized volatility goal (e.g. 0.20 = 20%).</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="LAMBDA_RISK">Risk aversion</label>
               <input type="number" step="0.1" class="form-control" id="LAMBDA_RISK" name="LAMBDA_RISK" value="{{ cfg.LAMBDA_RISK }}">
-              <label for="LAMBDA_RISK">Risk aversion</label>
+              <div class="setting-help">Higher values push for lower portfolio variance.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="TURNOVER_PENALTY">Turnover penalty</label>
               <input type="number" step="0.0001" class="form-control" id="TURNOVER_PENALTY" name="TURNOVER_PENALTY" value="{{ cfg.TURNOVER_PENALTY }}">
-              <label for="TURNOVER_PENALTY">Turnover penalty</label>
+              <div class="setting-help">Discourages unnecessary trading churn.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="REBALANCE_BAND">Rebalance band</label>
               <input type="number" step="0.01" class="form-control" id="REBALANCE_BAND" name="REBALANCE_BAND" value="{{ cfg.REBALANCE_BAND }}">
-              <label for="REBALANCE_BAND">Rebalance band</label>
+              <div class="setting-help">Only trade if weights drift beyond this band.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="NAME_MAX">Single name cap</label>
               <input type="number" step="0.01" class="form-control" id="NAME_MAX" name="NAME_MAX" value="{{ cfg.NAME_MAX }}">
-              <label for="NAME_MAX">Single name cap</label>
+              <div class="setting-help">Max allocation per ticker as a fraction of equity.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="SECTOR_MAX">Sector cap</label>
               <input type="number" step="0.01" class="form-control" id="SECTOR_MAX" name="SECTOR_MAX" value="{{ cfg.SECTOR_MAX }}">
-              <label for="SECTOR_MAX">Sector cap</label>
+              <div class="setting-help">Limit exposure to any single sector.</div>
             </div>
           </div>
           <div class="col-md-4">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="FILL_TIMEOUT_SEC">Limit fill timeout (sec)</label>
               <input type="number" class="form-control" id="FILL_TIMEOUT_SEC" name="FILL_TIMEOUT_SEC" value="{{ cfg.FILL_TIMEOUT_SEC }}">
-              <label for="FILL_TIMEOUT_SEC">Limit fill timeout (s)</label>
+              <div class="setting-help">Seconds to wait before switching to a fallback order.</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="card card-surface p-4 mb-4">
-        <h5 class="fw-semibold mb-3">Portfolio &amp; risk</h5>
-        <div class="row g-3">
+      <div class="setting-card mb-4">
+        <h5 class="fw-semibold mb-3">Portfolio guardrails</h5>
+        <div class="row g-4">
           <div class="col-md-4">
-            <label class="form-label" for="MAX_POSITIONS">Max positions</label>
-            <input type="number" class="form-control" id="MAX_POSITIONS" name="MAX_POSITIONS" min="1" max="20" value="{{ cfg.MAX_POSITIONS or 10 }}">
-            <div class="form-text">Upper bound on number of names held.</div>
+            <div class="setting-field">
+              <label class="setting-label" for="MAX_POSITIONS">Max holdings</label>
+              <input type="number" class="form-control" id="MAX_POSITIONS" name="MAX_POSITIONS" min="1" max="50" value="{{ cfg.MAX_POSITIONS or 10 }}">
+              <div class="setting-help">Upper bound on how many names can be held.</div>
+            </div>
           </div>
           <div class="col-md-4">
-            <label class="form-label" for="VOL_TARGET_ANNUAL">Vol target (annualized)</label>
-            <input type="number" step="0.01" class="form-control" id="VOL_TARGET_ANNUAL" name="VOL_TARGET_ANNUAL" value="{{ cfg.VOL_TARGET_ANNUAL or 0.22 }}">
-            <div class="form-text">Target portfolio volatility (e.g., 0.22 = 22% annualized).</div>
+            <div class="setting-field">
+              <label class="setting-label" for="VOL_TARGET_ANNUAL">Vol target (annual)</label>
+              <input type="number" step="0.01" class="form-control" id="VOL_TARGET_ANNUAL" name="VOL_TARGET_ANNUAL" value="{{ cfg.VOL_TARGET_ANNUAL or 0.22 }}">
+              <div class="setting-help">Desired annualized volatility after scaling.</div>
+            </div>
           </div>
           <div class="col-md-4">
-            <label class="form-label" for="GROSS_EXPOSURE_FLOOR">Gross exposure floor</label>
-            <input type="number" step="0.01" class="form-control" id="GROSS_EXPOSURE_FLOOR" name="GROSS_EXPOSURE_FLOOR" value="{{ cfg.GROSS_EXPOSURE_FLOOR or 0.75 }}">
-            <div class="form-text">Scale up (without leverage) if post-vol targeting gross is below this.</div>
+            <div class="setting-field">
+              <label class="setting-label" for="GROSS_EXPOSURE_FLOOR">Gross exposure floor</label>
+              <input type="number" step="0.01" class="form-control" id="GROSS_EXPOSURE_FLOOR" name="GROSS_EXPOSURE_FLOOR" value="{{ cfg.GROSS_EXPOSURE_FLOOR or 0.75 }}">
+              <div class="setting-help">Scale up the book if exposure falls below this.</div>
+            </div>
           </div>
           <div class="col-md-4">
-            <label class="form-label" for="MIN_ORDER_NOTIONAL">Min order notional ($)</label>
-            <input type="number" step="1" class="form-control" id="MIN_ORDER_NOTIONAL" name="MIN_ORDER_NOTIONAL" value="{{ cfg.MIN_ORDER_NOTIONAL or 125 }}">
-            <div class="form-text">Skip trades smaller than this to avoid dust.</div>
+            <div class="setting-field">
+              <label class="setting-label" for="MIN_ORDER_NOTIONAL">Min order size ($)</label>
+              <input type="number" step="1" class="form-control" id="MIN_ORDER_NOTIONAL" name="MIN_ORDER_NOTIONAL" value="{{ cfg.MIN_ORDER_NOTIONAL or 125 }}">
+              <div class="setting-help">Ignore tiny trades to avoid dust fills.</div>
+            </div>
           </div>
           <div class="col-md-4">
-            <label class="form-label" for="MIN_NET_BPS_TO_TRADE">Min net bps to trade</label>
-            <input type="number" step="0.1" class="form-control" id="MIN_NET_BPS_TO_TRADE" name="MIN_NET_BPS_TO_TRADE" value="{{ cfg.MIN_NET_BPS_TO_TRADE or 0 }}">
-            <div class="form-text">Gate: expected bps − costs must meet or exceed this threshold.</div>
+            <div class="setting-field">
+              <label class="setting-label" for="MIN_NET_BPS_TO_TRADE">Min net edge (bps)</label>
+              <input type="number" step="0.1" class="form-control" id="MIN_NET_BPS_TO_TRADE" name="MIN_NET_BPS_TO_TRADE" value="{{ cfg.MIN_NET_BPS_TO_TRADE or 0 }}">
+              <div class="setting-help">Require at least this many net basis points before trading.</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card card-surface p-4 mb-4">
-        <h5 class="fw-semibold mb-3">Execution & costs</h5>
-        <div class="row g-3">
+      <div class="setting-card">
+        <h5 class="fw-semibold mb-3">Execution &amp; costs</h5>
+        <div class="row g-4">
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="MAX_SLICES">Order slices</label>
               <input type="number" class="form-control" id="MAX_SLICES" name="MAX_SLICES" value="{{ cfg.MAX_SLICES }}">
-              <label for="MAX_SLICES">Max slices</label>
+              <div class="setting-help">How many limit slices to attempt per order.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="LIMIT_SLIP_BP">Limit slip (bps)</label>
               <input type="number" class="form-control" id="LIMIT_SLIP_BP" name="LIMIT_SLIP_BP" value="{{ cfg.LIMIT_SLIP_BP }}">
-              <label for="LIMIT_SLIP_BP">Limit slip (bps)</label>
+              <div class="setting-help">Max difference from the mid when quoting limits.</div>
             </div>
           </div>
           <div class="col-md-3">
-            <div class="form-floating">
+            <div class="setting-field">
+              <label class="setting-label" for="COST_SPREAD_BPS">Spread cost (bps)</label>
               <input type="number" step="0.01" class="form-control" id="COST_SPREAD_BPS" name="COST_SPREAD_BPS" value="{{ cfg.COST_SPREAD_BPS }}">
-              <label for="COST_SPREAD_BPS">Spread cost (bps)</label>
+              <div class="setting-help">Base estimate of half-spread to pay per trade.</div>
             </div>
           </div>
-          <div class="col-md-4">
-            <div class="form-floating">
+          <div class="col-md-3">
+            <div class="setting-field">
+              <label class="setting-label" for="COST_IMPACT_KAPPA">Impact kappa</label>
               <input type="number" step="0.01" class="form-control" id="COST_IMPACT_KAPPA" name="COST_IMPACT_KAPPA" value="{{ cfg.COST_IMPACT_KAPPA }}">
-              <label for="COST_IMPACT_KAPPA">Impact kappa</label>
+              <div class="setting-help">Controls how quickly costs grow with size.</div>
             </div>
           </div>
-          <div class="col-md-4">
-            <div class="form-floating">
+          <div class="col-md-3">
+            <div class="setting-field">
+              <label class="setting-label" for="COST_IMPACT_PSI">Impact psi</label>
               <input type="number" step="0.01" class="form-control" id="COST_IMPACT_PSI" name="COST_IMPACT_PSI" value="{{ cfg.COST_IMPACT_PSI }}">
-              <label for="COST_IMPACT_PSI">Impact psi</label>
+              <div class="setting-help">Shape parameter for market impact curve.</div>
             </div>
           </div>
-          <div class="col-md-4">
-            <div class="form-floating">
+          <div class="col-md-3">
+            <div class="setting-field">
+              <label class="setting-label" for="ATR_STOP_MULT">ATR stop multiple</label>
               <input type="number" step="0.1" class="form-control" id="ATR_STOP_MULT" name="ATR_STOP_MULT" value="{{ cfg.ATR_STOP_MULT }}">
-              <label for="ATR_STOP_MULT">ATR stop multiple</label>
+              <div class="setting-help">Distance to protective stop in ATR units.</div>
             </div>
           </div>
-          <div class="col-md-4">
-            <div class="form-floating">
+          <div class="col-md-3">
+            <div class="setting-field">
+              <label class="setting-label" for="TAKE_PROFIT_ATR">ATR take profit</label>
               <input type="number" step="0.1" class="form-control" id="TAKE_PROFIT_ATR" name="TAKE_PROFIT_ATR" value="{{ cfg.TAKE_PROFIT_ATR }}">
-              <label for="TAKE_PROFIT_ATR">ATR take profit</label>
+              <div class="setting-help">Take-profit distance in ATR units.</div>
             </div>
           </div>
-          <div class="col-md-4">
-            <div class="form-floating">
+          <div class="col-md-3">
+            <div class="setting-field">
+              <label class="setting-label" for="TIME_STOP_DAYS">Time stop (days)</label>
               <input type="number" class="form-control" id="TIME_STOP_DAYS" name="TIME_STOP_DAYS" value="{{ cfg.TIME_STOP_DAYS }}">
-              <label for="TIME_STOP_DAYS">Time stop (days)</label>
+              <div class="setting-help">Exit a trade if it lingers beyond this many days.</div>
             </div>
           </div>
         </div>
@@ -297,8 +360,11 @@
     </div>
   </div>
 
-  <div class="d-flex justify-content-end mt-3">
-    <button type="submit" class="btn btn-primary px-4">Save changes</button>
+  <div class="d-flex justify-content-end mt-4">
+    <button type="submit" class="btn btn-primary px-4 d-flex align-items-center gap-2">
+      <i class="bi bi-save"></i>
+      Save changes
+    </button>
   </div>
 </form>
 {% endblock %}

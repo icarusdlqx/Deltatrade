@@ -1,31 +1,34 @@
 from __future__ import annotations
-import os, csv
+import os, csv, json, math
 from pathlib import Path
 from datetime import datetime, timezone
 
 BASE_PROMPT = os.getenv("LLM_BASE_PROMPT",
   "You are Deltatrade’s risk-aware news scorer. "
-  "Given one or more headlines/snippets about equities, return a compact JSON "
-  "object mapping each mentioned ticker to a score in [-3,3] "
-  "(-3 strong bearish, +3 strong bullish). If uncertain, use 0. "
-  "Only use information in the text; do not invent tickers."
+  "Read headlines/snippets and return a compact JSON object mapping each mentioned "
+  "ticker to a score in [-3,3] (-3 strong bearish, +3 strong bullish). "
+  "If unsure, use 0. Do not invent tickers."
 )
 
 LOG_DIR = Path("logs"); LOG_DIR.mkdir(exist_ok=True)
-LOG_FILE = LOG_DIR / "llm_calls.csv"
+LLM_LOG = LOG_DIR / "llm_calls.csv"
 
-def _log(model: str, prompt: str, prompt_tokens=None, completion_tokens=None, note=""):
+class LLMError(Exception):
+    def __init__(self, err_type: str, message: str):
+        super().__init__(f"{err_type}: {message}")
+        self.err_type = err_type
+        self.message = message
+
+def _log_tokens(model: str, prompt: str, prompt_tokens=None, completion_tokens=None, note=""):
     if os.getenv("LLM_LOG_TOKENS","1") != "1": return
-    new = not LOG_FILE.exists()
-    with LOG_FILE.open("a", newline="") as f:
+    new = not LLM_LOG.exists()
+    with LLM_LOG.open("a", newline="") as f:
         w = csv.writer(f)
         if new:
             w.writerow(["ts_iso","model","prompt_excerpt","prompt_tokens","completion_tokens","note"])
-        w.writerow([
-            datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            model, (prompt[:240] + ("…" if len(prompt)>240 else "")),
-            prompt_tokens or "", completion_tokens or "", note
-        ])
+        excerpt = prompt[:240] + ("…" if len(prompt)>240 else "")
+        w.writerow([datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    model, excerpt, prompt_tokens or "", completion_tokens or "", note])
 
 def _client_new():
     try:
@@ -42,9 +45,20 @@ def _client_legacy():
     except Exception:
         return None
 
+def _classify_error_text(e: Exception) -> str:
+    s = str(e).lower()
+    if any(k in s for k in ["rate limit", "overloaded", "timeout", "temporar", "server error", "unavailable"]):
+        return "transient"
+    if any(k in s for k in ["invalid api key", "authentication", "billing", "payment"]):
+        return "fatal"
+    return "unknown"
+
 def chat_json(user_text: str, system_prompt: str = None, model: str = None) -> str:
     system_prompt = system_prompt or BASE_PROMPT
     model = model or os.getenv("OPENAI_MODEL","gpt-4o-mini")
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise LLMError("fatal","OPENAI_API_KEY not set")
 
     cli = _client_new()
     if cli:
@@ -56,12 +70,13 @@ def chat_json(user_text: str, system_prompt: str = None, model: str = None) -> s
                 temperature=0.1
             )
             msg = r.choices[0].message.content
-            u = getattr(r,"usage",None)
-            _log(model, system_prompt + "\n\n" + user_text,
-                 getattr(u,"prompt_tokens",None), getattr(u,"completion_tokens",None))
+            u = getattr(r, "usage", None)
+            _log_tokens(model, system_prompt+"\n\n"+user_text,
+                        getattr(u,"prompt_tokens",None), getattr(u,"completion_tokens",None))
             return msg
         except Exception as e:
-            _log(model, system_prompt + "\n\n" + user_text, note=f"error:{e}")
+            _log_tokens(model, system_prompt+"\n\n"+user_text, note=f"error:{type(e).__name__}:{e}")
+            raise LLMError(_classify_error_text(e), str(e))
 
     cli = _client_legacy()
     if cli:
@@ -73,24 +88,19 @@ def chat_json(user_text: str, system_prompt: str = None, model: str = None) -> s
                 temperature=0.1
             )
             msg = r["choices"][0]["message"]["content"]
-            u = r.get("usage",{})
-            _log(model, system_prompt + "\n\n" + user_text,
-                 u.get("prompt_tokens"), u.get("completion_tokens"))
+            u = r.get("usage", {})
+            _log_tokens(model, system_prompt+"\n\n"+user_text,
+                        u.get("prompt_tokens"), u.get("completion_tokens"))
             return msg
         except Exception as e:
-            _log(model, system_prompt + "\n\n" + user_text, note=f"error:{e}")
-    raise RuntimeError("OpenAI client not available or call failed.")
+            _log_tokens(model, system_prompt+"\n\n"+user_text, note=f"error:{type(e).__name__}:{e}")
+            raise LLMError(_classify_error_text(e), str(e))
+
+    raise LLMError("unknown","No OpenAI client available")
 
 def smoke_test():
-    if os.getenv("RUN_LLM_SMOKE","1") != "1":
-        return
-    key = os.getenv("OPENAI_API_KEY")
-    if not key:
-        print("[llm] OPENAI_API_KEY not set; skipping smoke test.")
-        _log(os.getenv("OPENAI_MODEL","gpt-4o-mini"), "smoke", note="no_key")
-        return
     try:
-        txt = chat_json("Reply only with OK.", "You are a health check.")
-        print("[llm] Smoke test:", str(txt)[:40])
-    except Exception as e:
-        print("[llm] Smoke test failed:", repr(e))
+        _ = chat_json("Reply with OK.", "You are a health check.")
+        print("[llm] Smoke test: OK")
+    except LLMError as e:
+        print("[llm] Smoke test failed:", e.err_type, e.message)

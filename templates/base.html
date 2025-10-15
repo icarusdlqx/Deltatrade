@@ -11,46 +11,60 @@
   </head>
   <body>
     <div class="app-shell d-flex">
-      <aside class="sidebar d-none d-md-flex flex-column">
+      <aside class="sidebar d-none d-xl-flex flex-column">
         <div class="brand p-4">
-          <a class="text-decoration-none" href="{{ url_for('dashboard') }}">
+          <a class="text-decoration-none d-flex align-items-center" href="{{ url_for('dashboard') }}">
             <span class="logo">Δ</span>
             <span class="brand-name">Deltatrade</span>
           </a>
         </div>
-        <nav class="flex-grow-1">
+        <nav class="flex-grow-1 py-3">
           <ul class="nav nav-pills flex-column">
             {% for item in nav_items %}
             <li class="nav-item">
               <a class="nav-link {% if active_page == item.endpoint %}active{% endif %}" href="{{ url_for(item.endpoint) }}">
-                <i class="{{ item.icon }} me-2"></i>{{ item.label }}
+                <i class="{{ item.icon }}"></i>
+                <span>{{ item.label }}</span>
               </a>
             </li>
             {% endfor %}
           </ul>
         </nav>
-        <div class="sidebar-footer px-4 py-3 small text-muted">
+        <div class="sidebar-footer px-4 py-3 small">
           &copy; {{ current_year }} Deltatrade AI
         </div>
       </aside>
 
-      <main class="flex-grow-1">
+      <main class="app-content flex-grow-1 d-flex flex-column">
         <header class="topbar d-flex align-items-center justify-content-between px-3 px-md-4 py-3">
-          <button class="btn btn-outline-secondary d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-controls="mobileNav">
-            <i class="bi bi-list"></i>
-          </button>
-          <div class="fw-semibold">{% block header_title %}{% endblock %}</div>
+          <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-outline-secondary d-xl-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileNav" aria-controls="mobileNav">
+              <i class="bi bi-list"></i>
+            </button>
+            <div class="fw-semibold text-uppercase small text-muted">Control Center</div>
+          </div>
           {% set env_info = env if env is defined else None %}
           {% if env_info %}
-          <div class="env-pill text-nowrap">
+          <div class="env-pill">
             <span class="badge bg-primary-subtle text-primary-emphasis">{{ env_info.mode_label }}</span>
-            <span class="ms-2 text-secondary small">Updated {{ env_info.as_of }}</span>
+            <span class="text-secondary small">Updated {{ env_info.as_of }}</span>
           </div>
           {% endif %}
         </header>
 
-        <div class="content-wrapper px-3 px-md-4 py-4">
-          {% block content %}{% endblock %}
+        <div class="content-wrapper">
+          <div class="page-container">
+            <div class="page-heading">
+              <div>
+                <h1 class="page-title">{% block header_title %}{% endblock %}</h1>
+                {% block header_lead %}{% endblock %}
+              </div>
+              <div class="page-heading-actions">
+                {% block header_actions %}{% endblock %}
+              </div>
+            </div>
+            {% block content %}{% endblock %}
+          </div>
         </div>
       </main>
     </div>
