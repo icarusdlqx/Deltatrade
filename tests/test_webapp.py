@@ -49,3 +49,54 @@ def test_run_now_triggers_manual_analysis(monkeypatch):
         assert b"Manual analysis complete" in follow_up.data
     finally:
         importlib.reload(agents_module)
+
+
+def test_run_now_handles_tuple_return(monkeypatch):
+    import importlib
+
+    webapp = importlib.import_module("webapp")
+
+    sample_episode = {
+        "as_of": "2025-01-02T09:30:00-05:00",
+        "gate": {
+            "expected_alpha_bps": 12.0,
+            "cost_bps": 4.0,
+            "net_bps": 8.0,
+            "turnover_pct": 5.0,
+            "order_count": 1,
+            "reasons": ["net_positive"],
+            "proceed": True,
+        },
+        "orders_submitted": ["order-1"],
+        "planned_orders_count": 1,
+        "diag": {},
+    }
+    sample_summary = {"summary": "Tuple summary", "plain_english": "Tuple summary"}
+
+    call_counter = {"count": 0}
+
+    def fake_orig_run_once():
+        call_counter["count"] += 1
+        return sample_episode, sample_summary
+
+    monkeypatch.setattr(webapp, "_orig_run_once", fake_orig_run_once)
+    monkeypatch.setattr(webapp._orc_mod, "run_once", webapp.run_once)
+    monkeypatch.setattr(
+        webapp,
+        "_load_episodes",
+        lambda path, limit=200, offset=0: ([sample_episode], 1),
+    )
+
+    client = webapp.app.test_client()
+
+    response = client.post("/run-now")
+
+    assert response.status_code == 302
+    assert call_counter["count"] == 1
+
+    location = response.headers["Location"]
+    assert "/dashboard" in location
+    assert "run_status=success" in location
+
+    follow_up = client.get(location)
+    assert b"Manual analysis complete" in follow_up.data
