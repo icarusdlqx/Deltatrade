@@ -222,3 +222,29 @@ Alternatively, you can pin your installation to the old version, e.g. `pip insta
 
 A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
 "
+2025-10-16T18:20:14+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T18:20:14+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T18:20:30+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,responses_error:'NoneType' object is not iterable
+2025-10-16T18:20:30+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
