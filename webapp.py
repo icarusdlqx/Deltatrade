@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+# --- START GPT-5 ENFORCER (medium effort, hard-coded prompt, logging) ---
+try:
+    from v2.agents_llm_enforce import apply_patch as _llm_enforce_apply
+
+    _llm_enforce_apply()
+except Exception as _e:
+    print("[llm_enforce] not applied:", _e)
+# --- END GPT-5 ENFORCER ---
+
 # --- START CODEX PATCH HOOK v3 (LLM failover + abs risk + dyn cost) ---
 try:
     from v2.codex_patch_v3 import apply as _codex_apply_v3
