@@ -6,9 +6,13 @@ import os
 
 # Automation & windows
 AUTOMATION_ENABLED = True
-TRADING_WINDOWS_ET = ["10:05", "14:35"]
+TRADING_WINDOWS_ET = ["10:05", "14:35", "16:35"]
 WINDOW_TOL_MIN = 30
 AVOID_NEAR_CLOSE_MIN = 10
+# Ensure we run only once in each window per trading day
+RUN_ONCE_PER_WINDOW = True
+# Where we persist the "this window already ran today" markers
+RUN_MARKERS_PATH = "data/run_markers.json"
 
 # Universe
 UNIVERSE_MODE = "sp500_plus_top50"
