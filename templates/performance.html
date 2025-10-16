@@ -4,6 +4,7 @@
 {% block header_title %}Performance analytics{% endblock %}
 
 {% block content %}
+<div class="section-title">Program summary</div>
 <div class="row g-3 mb-4">
   <div class="col-6 col-xl-3">
     <div class="card card-surface p-3 h-100">
@@ -41,6 +42,7 @@
 
 <div class="card card-surface p-4">
   <h5 class="fw-semibold mb-3">Episode detail</h5>
+  <p class="text-muted small">All values are shown in basis points so you can line them up with the gate math.</p>
   <div class="table-responsive">
     <table class="table table-modern table-striped align-middle mb-0">
       <thead class="text-uppercase small text-muted">
@@ -95,8 +97,8 @@
           {
             label: 'Expected α (bps)',
             data: expected,
-            borderColor: '#0d6efd',
-            backgroundColor: 'rgba(13, 110, 253, 0.2)',
+            borderColor: '#60a5fa',
+            backgroundColor: 'rgba(96, 165, 250, 0.25)',
             fill: false,
             tension: 0.35,
             borderWidth: 2
@@ -104,8 +106,8 @@
           {
             label: 'Costs (bps)',
             data: costs,
-            borderColor: '#dc3545',
-            backgroundColor: 'rgba(220, 53, 69, 0.15)',
+            borderColor: '#f472b6',
+            backgroundColor: 'rgba(244, 114, 182, 0.2)',
             fill: false,
             tension: 0.35,
             borderWidth: 2
@@ -113,8 +115,8 @@
           {
             label: 'Cumulative net',
             data: cumulative.map(v => v * 10000),
-            borderColor: '#198754',
-            backgroundColor: 'rgba(25, 135, 84, 0.1)',
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52, 211, 153, 0.16)',
             fill: false,
             tension: 0.35,
             borderDash: [6, 6],

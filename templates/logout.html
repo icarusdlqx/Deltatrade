@@ -4,14 +4,15 @@
 {% block header_title %}Sign out{% endblock %}
 
 {% block content %}
+<div class="section-title">Session hygiene</div>
 <div class="row justify-content-center">
   <div class="col-12 col-lg-6">
     <div class="card card-surface p-4">
       <h5 class="fw-semibold mb-3">Secure your session</h5>
-      <p class="text-muted">This demo interface does not maintain authentication state. To "log out" ensure that:</p>
+      <p class="text-muted">This demo interface does not maintain authentication state. Treat "logout" as good housekeeping:</p>
       <ol class="text-muted small ps-3">
         <li>Stop any running containers or services hosting this dashboard.</li>
-        <li>Remove API keys from the environment or secrets manager when you finish testing.</li>
+        <li>Remove API keys from the environment or secrets manager once you finish testing.</li>
         <li>Rotate credentials if you suspect they were exposed.</li>
       </ol>
       <div class="alert alert-info" role="alert">

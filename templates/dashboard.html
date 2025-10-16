@@ -4,10 +4,15 @@
 {% block header_title %}Trading Dashboard{% endblock %}
 
 {% block content %}
+<div class="section-title">Today at a glance</div>
 <div class="row g-3 mb-4">
   <div class="col-12 col-xl-4">
     <div class="card card-surface p-4 h-100">
-      <h6 class="fw-semibold mb-3">Status</h6>
+      <div class="d-flex justify-content-between align-items-start mb-3">
+        <h6 class="fw-semibold mb-0">Status</h6>
+        <span class="badge bg-primary-subtle text-primary-emphasis">{{ status.mode_label }}</span>
+      </div>
+      <p class="text-muted small mb-3">Automation {% if status.enabled %}is active and ready{% else %}is currently paused{% endif %}. Next scheduled run is shown below.</p>
       <dl class="row small mb-0">
         <dt class="col-5 text-muted">Mode</dt>
         <dd class="col-7">{{ status.mode_label }}</dd>
@@ -22,7 +27,8 @@
   </div>
   <div class="col-12 col-xl-4">
     <div class="card card-surface p-4 h-100">
-      <h6 class="fw-semibold mb-3">Portfolio snapshot</h6>
+      <h6 class="fw-semibold mb-2">Portfolio snapshot</h6>
+      <p class="text-muted small mb-3">Live totals synced from the broker feed.</p>
       <dl class="row small mb-0">
         <dt class="col-5 text-muted">Equity</dt>
         <dd class="col-7">{{ "${:,.0f}".format(portfolio_snapshot.equity) }}</dd>
@@ -90,6 +96,7 @@
   </div>
 </div>
 
+<div class="section-title mt-4">Narrative &amp; data</div>
 <div class="row g-3 mb-4">
   <div class="col-12 col-xl-6">
     <div class="card card-surface p-4 h-100">
@@ -154,6 +161,7 @@
   </div>
 </div>
 
+<div class="section-title mt-4">Run metrics</div>
 <div class="row g-3 mb-4">
   <div class="col-6 col-xl-3">
     <div class="card card-surface p-3 h-100">
@@ -181,6 +189,7 @@
   </div>
 </div>
 
+<div class="section-title mt-4">Latest diagnostics</div>
 <div class="row g-4">
   <div class="col-12 col-xl-8">
     <div class="card card-surface p-4 mb-4">
