@@ -4,11 +4,15 @@
 {% block header_title %}Portfolio positions{% endblock %}
 
 {% block content %}
+<div class="section-title">Portfolio oversight</div>
 <div class="row g-4">
   <div class="col-12 col-xl-4">
     <div class="card card-surface p-4 h-100">
-      <h5 class="fw-semibold">Exposure snapshot</h5>
-      <p class="text-muted small mb-4">Latest equity snapshot refreshed from the trading client.</p>
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <h5 class="fw-semibold mb-0">Exposure snapshot</h5>
+        <span class="badge bg-primary-subtle text-primary-emphasis">{{ env.mode_label }}</span>
+      </div>
+      <p class="text-muted small mb-4">Live balances synced from the trading client.</p>
       <dl class="row small mb-0">
         <dt class="col-6 text-muted">Total Account Value</dt>
         <dd class="col-6 fw-bold">${{ '%.2f'|format(snapshot.equity|default(0)) }}</dd>
@@ -45,7 +49,7 @@
         {{ message }}
       </div>
       {% endif %}
-      <small class="text-muted d-block mb-3">Manual sells are logged to the system Log (success or failure).</small>
+      <small class="text-muted d-block mb-3">Manual sells are tracked in the log so every discretionary action is recorded.</small>
       <div class="table-responsive">
         <table class="table table-modern positions-table align-middle mb-0">
           <thead class="text-uppercase small text-muted">
