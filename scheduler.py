@@ -59,9 +59,10 @@ try:
 except Exception as _e:
     print("[codex] LLM smoke test skipped:", _e)
 # --- END CODEX PATCH HOOK ---
-import os, time, signal
+import os, time, signal, json
 import pytz
 from datetime import datetime
+from pathlib import Path
 from alpaca.trading.client import TradingClient
 from v2.settings_bridge import get_cfg
 from v2.orchestrator import run_once
@@ -88,6 +89,59 @@ def in_window_et(now, windows, tol_min):
         except Exception:
             continue
     return False
+
+
+def _match_window_et(now, windows, tol_min):
+    """
+    Return the matched window string (e.g., '10:05') if now is within tol_min of it, else None.
+    """
+    et = now.astimezone(pytz.timezone("US/Eastern"))
+    for hhmm in windows or []:
+        try:
+            h, m = map(int, str(hhmm).split(":"))
+            target = et.replace(hour=h, minute=m, second=0, microsecond=0)
+            if abs((et - target).total_seconds())/60.0 <= tol_min:
+                return f"{h:02d}:{m:02d}"
+        except Exception:
+            continue
+    return None
+
+
+def _today_str(now_et=None):
+    now_et = now_et or datetime.now(pytz.timezone("US/Eastern"))
+    return now_et.strftime("%Y-%m-%d")
+
+
+def _load_markers(path):
+    try:
+        p = Path(path)
+        if not p.exists():
+            return {}
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_markers(markers, path):
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(markers, indent=2), encoding="utf-8")
+
+
+def _has_run_today(win_label, now_et, path):
+    markers = _load_markers(path)
+    ran = set(markers.get(_today_str(now_et), []))
+    return str(win_label) in ran
+
+
+def _mark_run_today(win_label, now_et, path):
+    markers = _load_markers(path)
+    key = _today_str(now_et)
+    lst = list(markers.get(key, []))
+    if str(win_label) not in lst:
+        lst.append(str(win_label))
+        markers[key] = lst
+        _save_markers(markers, path)
 
 def near_close_guard(trading_client, avoid_min):
     try:
@@ -147,41 +201,56 @@ if __name__ == "__main__":
     while True:
         try:
             cfg = get_cfg()  # re-read overrides each loop
-            now = datetime.now(pytz.timezone("US/Eastern"))
-            
-            if cfg.AUTOMATION_ENABLED and in_window_et(now, cfg.TRADING_WINDOWS_ET, int(cfg.WINDOW_TOL_MIN)) and not (tc and near_close_guard(tc, int(cfg.AVOID_NEAR_CLOSE_MIN))):
-                logger.info("Trading window active, executing run_once...")
-                
+            now_et = datetime.now(pytz.timezone("US/Eastern"))
+            win = _match_window_et(now_et, getattr(cfg, "TRADING_WINDOWS_ET", []), int(getattr(cfg, "WINDOW_TOL_MIN", 0)))
+            once_only = bool(getattr(cfg, "RUN_ONCE_PER_WINDOW", True))
+            markers_path = getattr(cfg, "RUN_MARKERS_PATH", "data/run_markers.json")
+            should_run = bool(cfg.AUTOMATION_ENABLED) and bool(win) and (
+                not once_only or not _has_run_today(win, now_et, markers_path)
+            )
+
+            # Block if too close to market close (when live TradingClient is present)
+            if should_run and (tc and near_close_guard(tc, int(cfg.AVOID_NEAR_CLOSE_MIN))):
+                should_run = False
+
+            if should_run:
+                logger.info(f"Trading window '{win}' active, executing run_once...")
+
                 # Set up timeout for run_once (5 minutes max)
                 signal.signal(signal.SIGALRM, timeout_handler)
                 signal.alarm(300)  # 5 minute timeout
-                
+
                 try:
                     ep = run_once()
                     signal.alarm(0)  # Cancel timeout
-                    logger.info(f"Episode completed: {ep.get('as_of')} proceed={ep.get('proceed')} orders={len(ep.get('orders_submitted',[]))}")
+                    logger.info(
+                        f"Episode completed: {ep.get('as_of')} proceed={ep.get('proceed')} orders={len(ep.get('orders_submitted',[]))}"
+                    )
+                    # Mark this window as completed for today to prevent additional runs in the tolerance band
+                    if once_only and win:
+                        _mark_run_today(win, now_et, markers_path)
                     consecutive_errors = 0  # Reset error counter on success
-                    
+                    # Sleep past the current minute to avoid double-trigger in the same window
+                    time.sleep(65)
+
                 except TimeoutException:
                     signal.alarm(0)
                     logger.error("run_once() timed out after 5 minutes")
                     consecutive_errors += 1
-                    
+
                 except Exception as e:
                     signal.alarm(0)
                     logger.error(f"Run error: {e}")
                     consecutive_errors += 1
-                    
-                # Check for too many consecutive errors
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"Too many consecutive errors ({consecutive_errors}), entering safe mode")
-                    time.sleep(300)  # Wait 5 minutes before retrying
-                    consecutive_errors = 0
-                    
-                time.sleep(60)
-            else:
-                logger.debug(f"Trading window inactive, sleeping... (automation_enabled={cfg.AUTOMATION_ENABLED})")
-                time.sleep(15)
+
+            # Check for too many consecutive errors
+            if consecutive_errors >= max_consecutive_errors:
+                logger.error(f"Too many consecutive errors ({consecutive_errors}), entering safe mode")
+                time.sleep(300)  # Wait 5 minutes before retrying
+                consecutive_errors = 0
+
+            # Short idle sleep; loop quickly to catch windows
+            time.sleep(15)
                 
         except KeyboardInterrupt:
             logger.info("Scheduler stopped by user")
