@@ -53,6 +53,7 @@ import gevent
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean
+from collections.abc import Mapping
 from typing import Any, Dict, List, Tuple
 import pytz
 
@@ -92,9 +93,15 @@ except Exception:
     _orig_run_once = None
 
 
-def _make_summary_from_episode(ep: Dict[str, Any]) -> Dict[str, str]:
+def _make_summary_from_episode(ep: Dict[str, Any] | Mapping[str, Any]) -> Dict[str, str]:
+    if isinstance(ep, Mapping):
+        ep_dict = dict(ep)
+    elif isinstance(ep, dict):
+        ep_dict = ep
+    else:
+        ep_dict = {}
     try:
-        summary = _summarize_last_run(ep)
+        summary = _summarize_last_run(ep_dict)
         text = summary.get("summary") or "run recorded"
         plain = summary.get("plain_english") or text
         return {"summary": text, "plain_english": plain}
@@ -105,10 +112,19 @@ def _make_summary_from_episode(ep: Dict[str, Any]) -> Dict[str, str]:
 class _EpisodeShim:
     """Dict-like wrapper that also cleanly unpacks into (episode, summary)."""
 
-    __slots__ = ("_ep",)
+    __slots__ = ("_ep", "_summary")
 
-    def __init__(self, ep: Any):
-        self._ep = ep if isinstance(ep, dict) else {}
+    def __init__(self, ep: Any, summary: Dict[str, Any] | None = None):
+        if isinstance(ep, Mapping):
+            self._ep: Dict[str, Any] = dict(ep)
+        elif isinstance(ep, dict):
+            self._ep = ep
+        else:
+            self._ep = {}
+        if isinstance(summary, Mapping):
+            self._summary: Dict[str, Any] | None = dict(summary)
+        else:
+            self._summary = None
 
     # mapping-ish APIs used throughout the app
     def get(self, *a, **kw):
@@ -138,10 +154,18 @@ class _EpisodeShim:
     def __repr__(self):
         return f"_EpisodeShim({self._ep!r})"
 
+    def as_dict(self) -> Dict[str, Any]:
+        return dict(self._ep)
+
+    def summary_dict(self) -> Dict[str, Any]:
+        if self._summary is None:
+            self._summary = _make_summary_from_episode(self._ep)
+        return dict(self._summary)
+
     # when someone does: ep, summary = run_once()
     def __iter__(self):
         yield self._ep
-        yield _make_summary_from_episode(self._ep)
+        yield self.summary_dict()
 
 
 def _compat_run_once(*args, **kwargs):
@@ -149,14 +173,46 @@ def _compat_run_once(*args, **kwargs):
         logging.getLogger(__name__).error("run_once() not found on v2.orchestrator")
         return _EpisodeShim({})
     res = _orig_run_once(*args, **kwargs)
-    # If upstream ever returns (episode, summary), normalize summary to dict
-    if isinstance(res, tuple) and len(res) >= 2:
-        ep, summary = res[0], res[1]
-        if not isinstance(summary, dict):
-            summary = _make_summary_from_episode(ep if isinstance(ep, dict) else {})
-        return ep, summary
-    # Otherwise return the dict-like shim that also supports unpacking
-    return _EpisodeShim(res if isinstance(res, dict) else {})
+    if isinstance(res, _EpisodeShim):
+        return res
+    if isinstance(res, tuple) and len(res) > 0:
+        ep = res[0]
+        summary = res[1] if len(res) >= 2 else None
+        if isinstance(summary, str):
+            summary = {"summary": summary, "plain_english": summary}
+        return _EpisodeShim(ep, summary)
+    return _EpisodeShim(res)
+
+
+def _normalize_episode_result(result: Any) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+    if isinstance(result, _EpisodeShim):
+        return result.as_dict(), result.summary_dict()
+
+    if isinstance(result, tuple):
+        ep_raw = result[0] if len(result) > 0 else {}
+        summary_raw = result[1] if len(result) > 1 else None
+
+        ep_dict, _ = _normalize_episode_result(ep_raw)
+
+        if isinstance(summary_raw, Mapping):
+            summary_dict = dict(summary_raw)
+        elif isinstance(summary_raw, str):
+            summary_dict = {"summary": summary_raw, "plain_english": summary_raw}
+        elif isinstance(summary_raw, _EpisodeShim):
+            _, summary_dict = _normalize_episode_result(summary_raw)
+        else:
+            summary_dict = None
+
+        if summary_dict is None:
+            summary_dict = _make_summary_from_episode(ep_dict)
+
+        return ep_dict, summary_dict
+
+    if isinstance(result, Mapping):
+        ep_dict = dict(result)
+        return ep_dict, _make_summary_from_episode(ep_dict)
+
+    return {}, None
 
 
 # Monkey-patch module function and the local global name so ALL call sites use it
@@ -793,9 +849,11 @@ def run_now():
 
         # Use gevent.Timeout for safe timeout handling in web workers
         with gevent.Timeout(120):  # Will raise TimeoutError if exceeded
-            episode = run_once()
+            episode_result = run_once()
 
-        summary = _summarize_last_run(episode) if episode else None
+        episode_data, summary = _normalize_episode_result(episode_result)
+        if not summary and episode_data:
+            summary = _summarize_last_run(episode_data)
         if summary:
             message = "Manual analysis complete — {summary_text}".format(summary_text=summary.get("summary", "run recorded"))
 
