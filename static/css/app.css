@@ -261,6 +261,10 @@ main {
   background: rgba(15, 118, 230, 0.08);
 }
 
+.table-modern tbody td {
+  color: #ffffff;
+}
+
 .card-surface .table {
   color: inherit;
 }
