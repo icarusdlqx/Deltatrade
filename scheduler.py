@@ -221,7 +221,13 @@ if __name__ == "__main__":
                 signal.alarm(300)  # 5 minute timeout
 
                 try:
-                    ep = run_once()
+                    result = run_once()
+                    if isinstance(result, tuple):
+                        ep = result[0] if len(result) > 0 else {}
+                    else:
+                        ep = result
+                    if not isinstance(ep, dict):
+                        ep = {}
                     signal.alarm(0)  # Cancel timeout
                     logger.info(
                         f"Episode completed: {ep.get('as_of')} proceed={ep.get('proceed')} orders={len(ep.get('orders_submitted',[]))}"

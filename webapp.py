@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 # --- START GPT-5 ENFORCER (medium effort, hard-coded prompt, logging) ---
 try:
     from v2.agents_llm_enforce import apply_patch as _llm_enforce_apply
@@ -60,7 +59,7 @@ from alpaca_client import (
 )
 
 from v2.config import MAX_LOG_ROWS
-from v2.orchestrator import run_once as _run_once_original
+from v2.orchestrator import run_once
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
 from v2.utils import write_jsonl
 
@@ -81,62 +80,6 @@ NAV_ITEMS = [
     {"endpoint": "settings", "label": "Settings", "icon": "bi-sliders"},
     {"endpoint": "logout", "label": "Logout", "icon": "bi-box-arrow-right"},
 ]
-
-
-# --- Manual-run compatibility shim ------------------------------------------
-# Allows both:
-#   ep = run_once()
-#   ep, summary = run_once()
-# without breaking code that treats the return as a dict.
-class _EpisodeAndSummary:
-    def __init__(self, episode):
-        self._ep = episode or {}
-
-    def __iter__(self):
-        # Unpacking triggers this; lazily compute a summary that the UI expects
-        try:
-            summary = _summarize_last_run(self._ep)
-        except Exception:
-            summary = {"summary": "run recorded", "plain_english": "run recorded"}
-        yield self._ep
-        yield summary
-
-    # Dict-like behavior so existing code continues to work
-    def __getitem__(self, key):
-        return self._ep[key]
-
-    def get(self, *args, **kwargs):
-        return self._ep.get(*args, **kwargs)
-
-    def keys(self):
-        return self._ep.keys()
-
-    def items(self):
-        return self._ep.items()
-
-    def values(self):
-        return self._ep.values()
-
-    def __contains__(self, key):
-        return key in self._ep
-
-    def __len__(self):
-        return len(self._ep)
-
-    def __bool__(self):
-        return bool(self._ep)
-
-    def __repr__(self):
-        return f"_EpisodeAndSummary({self._ep!r})"
-
-
-def run_once():
-    episode = _run_once_original()
-    return _EpisodeAndSummary(episode)
-
-
-
-
 def _environment_summary() -> Dict[str, Any]:
     alpaca_key = bool(os.environ.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY_V3"))
     alpaca_secret = bool(os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY_V3"))
@@ -758,9 +701,23 @@ def run_now():
 
         # Use gevent.Timeout for safe timeout handling in web workers
         with gevent.Timeout(120):  # Will raise TimeoutError if exceeded
-            episode = run_once()
+            result = run_once()
 
-        summary = _summarize_last_run(episode) if episode else None
+        episode: Dict[str, Any] | None
+        summary: Dict[str, Any] | None
+        if isinstance(result, tuple):
+            episode = result[0] if len(result) > 0 else {}
+            summary = result[1] if len(result) > 1 else None
+        else:
+            episode = result
+            summary = None
+
+        if not isinstance(episode, dict):
+            episode = {}
+
+        if not isinstance(summary, dict):
+            summary = _summarize_last_run(episode) if episode else None
+
         if summary:
             message = "Manual analysis complete — {summary_text}".format(summary_text=summary.get("summary", "run recorded"))
 
