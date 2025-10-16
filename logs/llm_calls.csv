@@ -94,3 +94,131 @@ Reply with OK.",21,2,
 2025-10-16T00:19:29+00:00,gpt-4o-mini,"You are a health check.
 
 Reply with OK.",21,2,
+2025-10-16T17:55:48+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:55:50+00:00,gpt-5,medium,event_v1,9885d59ca856,"SMOKE:
+ - Scheduler startup health-check. Reply with JSON.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:55:50+00:00,gpt-5,medium,event_v1,9885d59ca856,"SMOKE:
+ - Scheduler startup health-check. Reply with JSON.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:55:51+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:55:51+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:55:53+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:57:26+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:57:26+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:57:40+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:57:40+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:57:41+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:57:41+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:57:55+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:57:55+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:59:17+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:59:23+00:00,gpt-5,medium,event_v1,9885d59ca856,"SMOKE:
+ - Scheduler startup health-check. Reply with JSON.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:59:23+00:00,gpt-5,medium,event_v1,9885d59ca856,"SMOKE:
+ - Scheduler startup health-check. Reply with JSON.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:59:24+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:59:25+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:59:26+00:00,gpt-4o-mini,"You are a health check.
+
+Reply with OK.",21,2,
+2025-10-16T17:59:38+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:59:38+00:00,gpt-5,medium,event_v1,9885d59ca856,"KEEPALIVE:
+ - No material headlines this window.",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"
+2025-10-16T17:59:52+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,responses_error:'NoneType' object is not iterable
+2025-10-16T17:59:52+00:00,gpt-5,medium,event_v1,9885d59ca856,"NO_HEADLINES:
+ - (empty list)",,,"chat_error:
+
+You tried to access openai.ChatCompletion, but this is no longer supported in openai>=1.0.0 - see the README at https://github.com/openai/openai-python for the API.
+
+You can run `openai migrate` to automatically upgrade your codebase to use the 1.0.0 interface. 
+
+Alternatively, you can pin your installation to the old version, e.g. `pip install openai==0.28`
+
+A detailed migration guide is available here: https://github.com/openai/openai-python/discussions/742
+"

@@ -17,22 +17,35 @@ def apply_patch() -> int:
 
     if agents:
         def _wrap(fn):
-            def wrapped(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            def wrapped(*args: Any, **kwargs: Any):
                 headlines_by_symbol = kwargs.get("headlines_by_symbol")
                 if headlines_by_symbol is None and args and isinstance(args[0], dict):
                     headlines_by_symbol = args[0]
 
                 try:
-                    return score_events_gpt5(headlines_by_symbol or {})
+                    payload = score_events_gpt5(headlines_by_symbol or {})
+                    # Convert single dict to tuple (scores, meta) format
+                    scores = payload.get("scores", {})
+                    meta = {
+                        "called": True,
+                        "model": payload.get("model", ""),
+                        "tokens": payload.get("usage", {}).get("input_tokens", 0) + payload.get("usage", {}).get("output_tokens", 0),
+                        "source": payload.get("source", ""),
+                        "raw": payload.get("raw", ""),
+                    }
+                    return scores, meta
                 except LLMError as exc:
                     print("[llm_enforce] LLM call failed:", exc.kind, str(exc))
-                    return {
-                        "scores": {},
-                        "raw": "",
-                        "usage": {},
+                    # Return tuple format matching original function
+                    empty_scores = {}
+                    error_meta = {
+                        "called": False,
                         "model": "",
+                        "tokens": 0,
                         "source": f"error:{exc.kind}",
+                        "reason": str(exc),
                     }
+                    return empty_scores, error_meta
 
             return wrapped
 
