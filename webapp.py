@@ -1,4 +1,11 @@
 from __future__ import annotations
+"""
+Compatibility patch: make run_once() safe whether callers assign a single value
+    ep = run_once()
+or try to unpack two values
+    ep, summary = run_once()
+This avoids 'ValueError: too many values to unpack (expected 2)' seen on manual runs.
+"""
 
 # --- START GPT-5 ENFORCER (medium effort, hard-coded prompt, logging) ---
 try:
@@ -60,7 +67,7 @@ from alpaca_client import (
 )
 
 from v2.config import MAX_LOG_ROWS
-from v2.orchestrator import run_once as _run_once_original
+import v2.orchestrator as _orc_mod  # we'll wrap _orc_mod.run_once below
 from v2.settings_bridge import get_cfg, load_overrides, save_overrides
 from v2.utils import write_jsonl
 
@@ -71,42 +78,47 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "deltatrade-demo")
 
+# ---------------------------------------------------------------------------
+# Manual-run safety shim for run_once()
+# ---------------------------------------------------------------------------
+# Some code paths tried to do:   episode, summary = run_once()
+# while run_once() historically returned a single dict. Unpacking a dict raises
+# "too many values to unpack". This shim makes run_once() flexible:
+#   - If caller unpacks, it yields (episode_dict, summary_dict).
+#   - If caller assigns to a single var, it acts dict-like (ep.get(...), etc.).
+try:
+    _orig_run_once = getattr(_orc_mod, "run_once", None)
+except Exception:
+    _orig_run_once = None
 
 
-NAV_ITEMS = [
-    {"endpoint": "dashboard", "label": "Dashboard", "icon": "bi-speedometer2"},
-    {"endpoint": "positions", "label": "Positions", "icon": "bi-graph-up"},
-    {"endpoint": "log", "label": "Log", "icon": "bi-journal-text"},
-    {"endpoint": "performance", "label": "Performance", "icon": "bi-bar-chart"},
-    {"endpoint": "settings", "label": "Settings", "icon": "bi-sliders"},
-    {"endpoint": "logout", "label": "Logout", "icon": "bi-box-arrow-right"},
-]
+def _make_summary_from_episode(ep: Dict[str, Any]) -> Dict[str, str]:
+    try:
+        summary = _summarize_last_run(ep)
+        text = summary.get("summary") or "run recorded"
+        plain = summary.get("plain_english") or text
+        return {"summary": text, "plain_english": plain}
+    except Exception:
+        return {"summary": "run recorded", "plain_english": "run recorded"}
 
 
-# --- Manual-run compatibility shim ------------------------------------------
-# Allows both:
-#   ep = run_once()
-#   ep, summary = run_once()
-# without breaking code that treats the return as a dict.
-class _EpisodeAndSummary:
-    def __init__(self, episode):
-        self._ep = episode or {}
+class _EpisodeShim:
+    """Dict-like wrapper that also cleanly unpacks into (episode, summary)."""
 
-    def __iter__(self):
-        # Unpacking triggers this; lazily compute a summary that the UI expects
-        try:
-            summary = _summarize_last_run(self._ep)
-        except Exception:
-            summary = {"summary": "run recorded", "plain_english": "run recorded"}
-        yield self._ep
-        yield summary
+    __slots__ = ("_ep",)
 
-    # Dict-like behavior so existing code continues to work
-    def __getitem__(self, key):
-        return self._ep[key]
+    def __init__(self, ep: Any):
+        self._ep = ep if isinstance(ep, dict) else {}
 
-    def get(self, *args, **kwargs):
-        return self._ep.get(*args, **kwargs)
+    # mapping-ish APIs used throughout the app
+    def get(self, *a, **kw):
+        return self._ep.get(*a, **kw)
+
+    def __getitem__(self, k):
+        return self._ep[k]
+
+    def __contains__(self, k):
+        return k in self._ep
 
     def keys(self):
         return self._ep.keys()
@@ -117,9 +129,6 @@ class _EpisodeAndSummary:
     def values(self):
         return self._ep.values()
 
-    def __contains__(self, key):
-        return key in self._ep
-
     def __len__(self):
         return len(self._ep)
 
@@ -127,16 +136,42 @@ class _EpisodeAndSummary:
         return bool(self._ep)
 
     def __repr__(self):
-        return f"_EpisodeAndSummary({self._ep!r})"
+        return f"_EpisodeShim({self._ep!r})"
+
+    # when someone does: ep, summary = run_once()
+    def __iter__(self):
+        yield self._ep
+        yield _make_summary_from_episode(self._ep)
 
 
-def run_once():
-    episode = _run_once_original()
-    return _EpisodeAndSummary(episode)
+def _compat_run_once(*args, **kwargs):
+    if _orig_run_once is None:
+        logging.getLogger(__name__).error("run_once() not found on v2.orchestrator")
+        return _EpisodeShim({})
+    res = _orig_run_once(*args, **kwargs)
+    # If upstream ever returns (episode, summary), normalize summary to dict
+    if isinstance(res, tuple) and len(res) >= 2:
+        ep, summary = res[0], res[1]
+        if not isinstance(summary, dict):
+            summary = _make_summary_from_episode(ep if isinstance(ep, dict) else {})
+        return ep, summary
+    # Otherwise return the dict-like shim that also supports unpacking
+    return _EpisodeShim(res if isinstance(res, dict) else {})
 
 
+# Monkey-patch module function and the local global name so ALL call sites use it
+_orc_mod.run_once = _compat_run_once
+globals()["run_once"] = _compat_run_once
 
 
+NAV_ITEMS = [
+    {"endpoint": "dashboard", "label": "Dashboard", "icon": "bi-speedometer2"},
+    {"endpoint": "positions", "label": "Positions", "icon": "bi-graph-up"},
+    {"endpoint": "log", "label": "Log", "icon": "bi-journal-text"},
+    {"endpoint": "performance", "label": "Performance", "icon": "bi-bar-chart"},
+    {"endpoint": "settings", "label": "Settings", "icon": "bi-sliders"},
+    {"endpoint": "logout", "label": "Logout", "icon": "bi-box-arrow-right"},
+]
 def _environment_summary() -> Dict[str, Any]:
     alpaca_key = bool(os.environ.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY_V3"))
     alpaca_secret = bool(os.environ.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY_V3"))
