@@ -444,6 +444,8 @@ def dashboard():
     episodes, total = _load_episodes(cfg.EPISODES_PATH, limit=120)
     latest = episodes[0] if episodes else None
     env = _environment_summary()
+    run_status = request.args.get("run_status")
+    run_message = request.args.get("run_message")
     metrics = _dashboard_metrics(episodes, total_count=total)
     next_run_dt = _next_run_time(cfg)
     next_run_label = _format_next_run(next_run_dt) if next_run_dt else "No run scheduled"
@@ -472,6 +474,8 @@ def dashboard():
         portfolio_snapshot=portfolio_snapshot,
         last_run=last_run_summary,
         last_diag=last_diag,
+        run_status=run_status,
+        run_message=run_message,
         active_page="dashboard",
     )
 
@@ -692,21 +696,42 @@ def performance():
 
 @app.route("/run-now", methods=["POST"])
 def run_now():
+    status = "success"
+    message = "Manual analysis completed successfully."
+
     try:
         logger.info("Manual run_once triggered via web interface")
-        
+
         # Use gevent.Timeout for safe timeout handling in web workers
         with gevent.Timeout(120):  # Will raise TimeoutError if exceeded
-            run_once()
-        
+            episode = run_once()
+
+        summary = _summarize_last_run(episode) if episode else None
+        if summary:
+            message = "Manual analysis complete — {summary_text}".format(summary_text=summary.get("summary", "run recorded"))
+
         logger.info("Manual run_once completed successfully")
-            
+
     except gevent.Timeout:
+        status = "error"
+        message = "Manual analysis timed out after 2 minutes."
         logger.error("Manual run_once timed out after 2 minutes")
-    except Exception as e:
-        logger.error(f"Manual run_once failed: {e}")
-        
-    return redirect(url_for("dashboard"))
+        insert_log(
+            "ERROR",
+            "manual_run_timeout",
+            {"message": message},
+        )
+    except Exception as exc:
+        status = "error"
+        message = f"Manual analysis failed: {exc}"
+        logger.exception("Manual run_once failed")
+        insert_log(
+            "ERROR",
+            "manual_run_failed",
+            {"message": message},
+        )
+
+    return redirect(url_for("dashboard", run_status=status, run_message=message))
 
 
 @app.route("/settings", methods=["GET", "POST"])

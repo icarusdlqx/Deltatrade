@@ -8,10 +8,18 @@ def _compose_user_text(items: Dict[str, List[str]]) -> str:
     # Compact bullet list per ticker; LLM prompt instructs JSON output.
     lines = []
     for sym, heads in (items or {}).items():
-        if not heads: continue
+        if not heads:
+            continue
         lines.append(f"{sym}:")
         for h in heads[:6]:
-            lines.append(f" - {h.strip()}")
+            if isinstance(h, dict):
+                text = h.get("headline") or h.get("title") or h.get("summary") or ""
+            else:
+                text = str(h)
+            text = str(text).strip()
+            if not text:
+                continue
+            lines.append(f" - {text}")
     return "\n".join(lines) if lines else "No headlines."
 
 def _parse_scores(txt: str) -> Dict[str, float]:
