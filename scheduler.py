@@ -1,3 +1,12 @@
+# --- START LLM BOOTSTRAP (prompt + logging + cache + smoke) ---
+try:
+    from v2.llm_client import smoke_test as _llm_smoke
+    from v2.agents_llm_bridge import apply_patch_into_agents as _llm_patch
+    _llm_patch(); _llm_smoke()
+except Exception as _e:
+    print("[codex] LLM bootstrap not applied:", _e)
+# --- END LLM BOOTSTRAP ---
+
 from __future__ import annotations
 
 # --- START GPT-5 ENFORCER (medium effort, hard-coded prompt, logging) ---
