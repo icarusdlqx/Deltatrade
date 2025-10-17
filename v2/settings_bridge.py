@@ -8,6 +8,9 @@ from . import config as C
 ALLOWED_KEYS = [
     "AUTOMATION_ENABLED","TRADING_WINDOWS_ET","WINDOW_TOL_MIN","AVOID_NEAR_CLOSE_MIN",
     "RUN_ONCE_PER_WINDOW","RUN_MARKERS_PATH",
+    # News step (Step 2)
+    "ENABLE_NEWS_CHECK","NEWS_SOURCES","NEWS_LOOKBACK_MIN","NEWS_MAX_PER_RUN",
+    "NEWS_CACHE_PATH","NEWS_KEYWORDS_INCLUDE","NEWS_KEYWORDS_EXCLUDE",
     "UNIVERSE_MODE","UNIVERSE_MAX","DATA_LOOKBACK_DAYS","MIN_BARS",
     "RESID_MOM_LOOKBACK","TREND_FAST","TREND_SLOW","REVERSAL_DAYS","WINSOR_PCT",
     "ENABLE_EVENT_SCORE","NEWS_LOOKBACK_DAYS","EVENT_TOP_K","EVENT_ALPHA_MULT",
@@ -42,6 +45,11 @@ def _coerce_settings(values: Dict[str, Any]) -> Dict[str, Any]:
     tw = data.get("TRADING_WINDOWS_ET")
     if isinstance(tw, str):
         data["TRADING_WINDOWS_ET"] = [x.strip() for x in tw.split(",") if x.strip()]
+    # Coerce lists provided as comma-separated strings
+    for key in ("NEWS_SOURCES","NEWS_KEYWORDS_INCLUDE","NEWS_KEYWORDS_EXCLUDE"):
+        v = data.get(key)
+        if isinstance(v, str):
+            data[key] = [x.strip() for x in v.split(",") if x.strip()]
     sw = data.get("SLEEVE_WEIGHTS")
     if isinstance(sw, dict):
         total = sum(max(0.0, float(v)) for v in sw.values()) or 1.0

@@ -714,3 +714,29 @@ def run_once() -> dict:
     }
     write_jsonl(C.EPISODES_PATH, ep)
     return ep
+
+
+# === News Step (Step 2) wrapper injection ====================================
+# We wrap run_once() so EVERY analysis captures a news snapshot/score
+# without changing call sites. If news step fails, we degrade gracefully.
+try:
+    _ORIG_RUN_ONCE = run_once  # type: ignore[name-defined]
+except Exception:
+    _ORIG_RUN_ONCE = None
+
+if _ORIG_RUN_ONCE is not None:
+    import logging as _logging
+
+    def run_once(*args, **kwargs):  # type: ignore[no-redef]
+        ep = _ORIG_RUN_ONCE(*args, **kwargs)
+        try:
+            from .news_step import attach_news_to_episode as _attach_news
+
+            ep = _attach_news(ep)
+        except Exception as _e:
+            try:
+                _logging.getLogger(__name__).warning("News step failed: %s", _e)
+            except Exception:
+                pass
+        return ep
+# =============================================================================
