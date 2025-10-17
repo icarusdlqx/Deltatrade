@@ -83,3 +83,28 @@ OPENAI_REASONING_EFFORT = "medium"
 
 # Execution cost heuristic
 COST_BPS_PER_1PCT_TURNOVER = float(os.getenv("COST_BPS_PER_1PCT_TURNOVER", "3.0"))
+
+# ======= News / Macro (Step 2) =======
+# Toggle the news check step
+ENABLE_NEWS_CHECK = True
+# RSS sources (no keys required). You can add/remove in settings overrides.
+NEWS_SOURCES = [
+    "https://feeds.reuters.com/reuters/marketsNews",
+    "https://feeds.reuters.com/reuters/businessNews",
+    "https://www.bls.gov/feed/news.rss",
+    "https://www.federalreserve.gov/feeds/press_all.xml",
+]
+# Consider only articles within this many minutes of 'now'
+NEWS_LOOKBACK_MIN = 240
+# Cap the number of items analyzed per run to bound latency/cost
+NEWS_MAX_PER_RUN = 20
+# Persist small cache of seen items (to reduce noise/dupes)
+NEWS_CACHE_PATH = "data/news_cache.json"
+# Optional keyword filters (case-insensitive). If empty, no include filtering.
+NEWS_KEYWORDS_INCLUDE = [
+    "fed","fomc","powell","rate","yield","treasury","inflation","cpi","ppi","jobs",
+    "payrolls","unemployment","ism","pmi","gdp","tariff","sanction","war","conflict",
+    "strike","shutdown","opec","oil","energy","guidance","downgrade","upgrade",
+]
+# Exclusion list (e.g., obvious spam/noise); leave empty by default
+NEWS_KEYWORDS_EXCLUDE = []
