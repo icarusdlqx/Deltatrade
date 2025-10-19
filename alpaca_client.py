@@ -8,6 +8,7 @@ from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
+from infra.heartbeat import wrap_heartbeat
 
 
 def _client() -> TradingClient:
