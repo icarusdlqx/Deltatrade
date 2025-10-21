@@ -79,6 +79,23 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "deltatrade-demo")
 
+
+@app.context_processor
+def inject_positions_count() -> Dict[str, int]:
+    """Expose real-time open positions count to all templates."""
+    count = 0
+    try:
+        positions = alp_list_positions()
+        open_positions = [
+            pos
+            for pos in positions
+            if float(getattr(pos, "qty", getattr(pos, "quantity", "0")) or 0.0) != 0.0
+        ]
+        count = len(open_positions)
+    except Exception:
+        count = 0
+    return {"positions_open_count": count, "positions_count": count}
+
 # ---------------------------------------------------------------------------
 # Manual-run safety shim for run_once()
 # ---------------------------------------------------------------------------
@@ -462,30 +479,33 @@ def _positions_snapshot(env: Dict[str, Any]) -> Dict[str, Any]:
         raw_positions = alp_list_positions()
         positions: List[Dict[str, Any]] = []
         for pos in raw_positions:
-            try:
-                qty = float(pos.get("qty") or 0.0)
-            except Exception:
-                qty = 0.0
-            try:
-                qty_available = float(pos.get("qty_available") or 0.0)
-            except Exception:
-                qty_available = qty
+            get = pos.get if isinstance(pos, Mapping) else None
+            symbol = get("symbol") if get else getattr(pos, "symbol", "")
+            qty = get("qty") if get else getattr(pos, "qty", 0.0)
+            qty_available = get("qty_available") if get else getattr(pos, "qty_available", qty)
+            avg_price = get("avg_entry_price") if get else getattr(pos, "avg_entry_price", 0.0)
+            current_price = get("current_price") if get else getattr(pos, "current_price", 0.0)
+            market_value = get("market_value") if get else getattr(pos, "market_value", 0.0)
+            unrealized_pl = get("unrealized_pl") if get else getattr(pos, "unrealized_pl", 0.0)
             positions.append(
                 {
-                    "symbol": pos.get("symbol"),
-                    "qty": qty,
-                    "qty_available": qty_available,
-                    "avg_price": float(pos.get("avg_entry_price") or 0.0),
-                    "current_price": float(pos.get("current_price") or 0.0),
-                    "market_value": float(pos.get("market_value") or 0.0),
-                    "unrealized_pl": float(pos.get("unrealized_pl") or 0.0),
+                    "symbol": symbol,
+                    "qty": float(qty or 0.0),
+                    "qty_available": float(qty_available or qty or 0.0),
+                    "avg_price": float(avg_price or 0.0),
+                    "current_price": float(current_price or 0.0),
+                    "market_value": float(market_value or 0.0),
+                    "unrealized_pl": float(unrealized_pl or 0.0),
                 }
             )
         account = alp_get_account()
+        acc_get = account.get if isinstance(account, Mapping) else None
+        cash_val = acc_get("cash") if acc_get else getattr(account, "cash", 0.0)
+        equity_val = acc_get("equity") if acc_get else getattr(account, "equity", 0.0)
         return {
             "positions": positions,
-            "cash": float(account.get("cash", 0.0)),
-            "equity": float(account.get("equity", 0.0)),
+            "cash": float(cash_val or 0.0),
+            "equity": float(equity_val or 0.0),
             "simulated": False,
         }
     except Exception as exc:

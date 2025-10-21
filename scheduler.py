@@ -66,6 +66,7 @@ from pathlib import Path
 from alpaca.trading.client import TradingClient
 from v2.settings_bridge import get_cfg
 from v2.orchestrator import run_once
+from v2.baseline_exposure import maybe_adjust_baseline_exposure
 import logging
 
 # Configure logging
@@ -226,6 +227,11 @@ if __name__ == "__main__":
                     logger.info(
                         f"Episode completed: {ep.get('as_of')} proceed={ep.get('proceed')} orders={len(ep.get('orders_submitted',[]))}"
                     )
+                    if tc:
+                        try:
+                            maybe_adjust_baseline_exposure(tc, cfg, logger=logger)
+                        except Exception as _baseline_err:
+                            logger.warning(f"Baseline exposure adjust skipped: {_baseline_err}")
                     # Mark this window as completed for today to prevent additional runs in the tolerance band
                     if once_only and win:
                         _mark_run_today(win, now_et, markers_path)

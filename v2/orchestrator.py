@@ -738,5 +738,14 @@ if _ORIG_RUN_ONCE is not None:
                 _logging.getLogger(__name__).warning("News step failed: %s", _e)
             except Exception:
                 pass
+        try:
+            from .trade_rationale import attach_order_rationales as _attach_r
+
+            ep = _attach_r(ep)
+        except Exception as _e:
+            try:
+                _logging.getLogger(__name__).warning("Rationale attach failed: %s", _e)
+            except Exception:
+                pass
         return ep
 # =============================================================================
