@@ -8,10 +8,13 @@ from . import config as C
 ALLOWED_KEYS = [
     "AUTOMATION_ENABLED","TRADING_WINDOWS_ET","WINDOW_TOL_MIN","AVOID_NEAR_CLOSE_MIN",
     "RUN_ONCE_PER_WINDOW","RUN_MARKERS_PATH",
+    # Expert advisor and rationale memory
+    "ENABLE_WEB_ADVISOR","WEB_ADVISOR_MODEL","WEB_ADVISOR_DOMAIN_ALLOWLIST",
+    "WEB_ADVISOR_RECENCY_DAYS","WEB_ADVISOR_MAX_PAGES","ADVISOR_MAX_TRADES_PER_RUN",
+    "EPISODES_MEMORY_LOOKBACK","MIN_HOLD_DAYS_BEFORE_SELL",
     # Baseline exposure policy and churn control
     "BASELINE_ENABLE","BASELINE_TICKER","BASELINE_MIN","BASELINE_MAX","BASELINE_TARGET",
     "BASELINE_MAX_STEP","BASELINE_ADJUST_COOLDOWN_MIN","POLICY_STATE_PATH",
-    "MIN_HOLD_DAYS_BEFORE_SELL",
     # News step (Step 2)
     "ENABLE_NEWS_CHECK","NEWS_SOURCES","NEWS_LOOKBACK_MIN","NEWS_MAX_PER_RUN",
     "NEWS_CACHE_PATH","NEWS_KEYWORDS_INCLUDE","NEWS_KEYWORDS_EXCLUDE",
@@ -50,7 +53,7 @@ def _coerce_settings(values: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(tw, str):
         data["TRADING_WINDOWS_ET"] = [x.strip() for x in tw.split(",") if x.strip()]
     # Coerce lists provided as comma-separated strings
-    for key in ("NEWS_SOURCES","NEWS_KEYWORDS_INCLUDE","NEWS_KEYWORDS_EXCLUDE"):
+    for key in ("NEWS_SOURCES","NEWS_KEYWORDS_INCLUDE","NEWS_KEYWORDS_EXCLUDE","WEB_ADVISOR_DOMAIN_ALLOWLIST"):
         v = data.get(key)
         if isinstance(v, str):
             data[key] = [x.strip() for x in v.split(",") if x.strip()]

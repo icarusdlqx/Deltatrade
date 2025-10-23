@@ -27,6 +27,27 @@ TREND_SLOW = 50
 REVERSAL_DAYS = 3
 WINSOR_PCT = 0.02
 
+# ================= Expert Advisor (web + memory) =================
+ENABLE_WEB_ADVISOR = True
+WEB_ADVISOR_MODEL = os.getenv("WEB_ADVISOR_MODEL", "gpt-5")
+WEB_ADVISOR_DOMAIN_ALLOWLIST = [
+    "reuters.com",
+    "bloomberg.com",
+    "wsj.com",
+    "ft.com",
+    "federalreserve.gov",
+    "bls.gov",
+    "treasury.gov",
+    "opec.org",
+    "ecb.europa.eu",
+    "sec.gov",
+]
+WEB_ADVISOR_RECENCY_DAYS = int(os.getenv("WEB_ADVISOR_RECENCY_DAYS", "7"))
+WEB_ADVISOR_MAX_PAGES = int(os.getenv("WEB_ADVISOR_MAX_PAGES", "12"))
+ADVISOR_MAX_TRADES_PER_RUN = int(os.getenv("ADVISOR_MAX_TRADES_PER_RUN", "6"))
+MIN_HOLD_DAYS_BEFORE_SELL = int(os.getenv("MIN_HOLD_DAYS_BEFORE_SELL", "30"))
+EPISODES_MEMORY_LOOKBACK = int(os.getenv("EPISODES_MEMORY_LOOKBACK", "120"))
+
 # Event scoring (AI)
 ENABLE_EVENT_SCORE = True
 NEWS_LOOKBACK_DAYS = 7
@@ -53,7 +74,6 @@ BASELINE_TARGET = float(os.getenv("BASELINE_TARGET", "0.65"))
 BASELINE_MAX_STEP = float(os.getenv("BASELINE_MAX_STEP", "0.20"))
 BASELINE_ADJUST_COOLDOWN_MIN = int(os.getenv("BASELINE_ADJUST_COOLDOWN_MIN", "120"))
 POLICY_STATE_PATH = "data/policy_state.json"
-MIN_HOLD_DAYS_BEFORE_SELL = int(os.getenv("MIN_HOLD_DAYS_BEFORE_SELL", "30"))
 LAMBDA_RISK = 8.0
 TURNOVER_PENALTY = 0.0005
 SECTOR_MAX = 0.30
