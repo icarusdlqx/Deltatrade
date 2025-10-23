@@ -418,6 +418,16 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         plain = (
             "Skipped — reasons: {reasons}. Gate: exp {expected:.1f}, cost {cost:.1f}, net {net:.1f} bps."
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
+
+    advisor_summary = ""
+    advisor_snippet = latest.get("advisor_summary_1p")
+    if not advisor_snippet and isinstance(latest.get("advisor_report"), dict):
+        advisor_snippet = latest["advisor_report"].get("world_state_summary")
+    if advisor_snippet:
+        advisor_summary = str(advisor_snippet).strip()
+        if advisor_summary:
+            summary = (summary + " Advisor: " + advisor_summary).strip()
+            plain = (plain + " Advisor: " + advisor_summary).strip()
     return {
         "summary": summary,
         "plain_english": plain,
@@ -431,6 +441,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         "proceed_gate": proceed_gate,
         "proceed_final": proceed_final,
         "actual_orders": len(actual_orders),
+        "advisor_summary": advisor_summary,
     }
 
 
@@ -648,7 +659,18 @@ def dashboard():
 @app.route("/positions")
 def positions():
     env = _environment_summary()
-    snapshot = _positions_snapshot(env)
+    snapshot_raw = _positions_snapshot(env)
+    try:
+        open_positions = [
+            pos
+            for pos in snapshot_raw.get("positions", [])
+            if float(pos.get("qty") if isinstance(pos, dict) else getattr(pos, "qty", 0.0) or 0.0) != 0.0
+        ]
+    except Exception:
+        open_positions = snapshot_raw.get("positions", [])
+    snapshot = dict(snapshot_raw)
+    snapshot["positions"] = open_positions
+    snapshot["positions_count"] = len(open_positions)
     message = request.args.get("message")
     status = request.args.get("status", "success")
     return render_template(
@@ -911,9 +933,18 @@ def settings():
         data["ENABLE_EVENT_SCORE"]   = g("ENABLE_EVENT_SCORE")   == "on"
         data["ENABLE_COST_GATE"]     = g("ENABLE_COST_GATE")     == "on"
         data["ENABLE_VOL_TARGETING"] = g("ENABLE_VOL_TARGETING") == "on"
-        data["TRADING_WINDOWS_ET"]   = g("TRADING_WINDOWS_ET", "10:05,14:35")
+        data["TRADING_WINDOWS_ET"]   = g("TRADING_WINDOWS_ET", "10:05,14:35,16:35")
         data["WINDOW_TOL_MIN"]       = int(g("WINDOW_TOL_MIN", "30"))
         data["AVOID_NEAR_CLOSE_MIN"] = int(g("AVOID_NEAR_CLOSE_MIN", "10"))
+        data["ENABLE_WEB_ADVISOR"]   = g("ENABLE_WEB_ADVISOR") == "on"
+        data["WEB_ADVISOR_MODEL"]    = g("WEB_ADVISOR_MODEL", "gpt-5")
+        data["WEB_ADVISOR_RECENCY_DAYS"] = int(g("WEB_ADVISOR_RECENCY_DAYS", "7"))
+        data["WEB_ADVISOR_MAX_PAGES"] = int(g("WEB_ADVISOR_MAX_PAGES", "12"))
+        allowlist = g("WEB_ADVISOR_DOMAIN_ALLOWLIST", "").strip()
+        if allowlist:
+            data["WEB_ADVISOR_DOMAIN_ALLOWLIST"] = allowlist
+        data["ADVISOR_MAX_TRADES_PER_RUN"] = int(g("ADVISOR_MAX_TRADES_PER_RUN", "6"))
+        data["MIN_HOLD_DAYS_BEFORE_SELL"] = int(g("MIN_HOLD_DAYS_BEFORE_SELL", "30"))
         data["UNIVERSE_MODE"]        = g("UNIVERSE_MODE", "etfs_only")
         data["UNIVERSE_MAX"]         = int(g("UNIVERSE_MAX", "450"))
         data["DATA_LOOKBACK_DAYS"]   = int(g("DATA_LOOKBACK_DAYS", "260"))
@@ -967,6 +998,34 @@ def settings():
     cfg = get_cfg()
     env = _environment_summary()
     return render_template("settings.html", cfg=cfg, ov=load_overrides(), active_page="settings", env=env)
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Diagnostics endpoint showing broker connectivity and exposure."""
+
+    try:
+        account = alp_get_account()
+        clock = alp_get_clock()
+        positions = alp_list_positions()
+        open_positions = [
+            pos
+            for pos in positions
+            if float(getattr(pos, "qty", getattr(pos, "quantity", 0)) or 0.0) != 0.0
+        ]
+        return jsonify(
+            {
+                "ok": True,
+                "equity": getattr(account, "equity", None),
+                "cash": getattr(account, "cash", None),
+                "open_positions": len(open_positions),
+                "market_is_open": bool(getattr(clock, "is_open", False)),
+                "next_open": str(getattr(clock, "next_open", "")),
+                "next_close": str(getattr(clock, "next_close", "")),
+            }
+        ), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/logout")

@@ -747,5 +747,18 @@ if _ORIG_RUN_ONCE is not None:
                 _logging.getLogger(__name__).warning("Rationale attach failed: %s", _e)
             except Exception:
                 pass
+        try:
+            tc = kwargs.get("trading_client") if isinstance(kwargs, dict) else None
+        except Exception:
+            tc = None
+        try:
+            from .advisor_websearch import attach_advisor_to_episode as _attach_adv
+
+            ep = _attach_adv(ep, tc=tc, cfg=get_cfg())
+        except Exception as _e:
+            try:
+                _logging.getLogger(__name__).warning("Advisor attach failed: %s", _e)
+            except Exception:
+                pass
         return ep
 # =============================================================================
