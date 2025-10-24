@@ -41,6 +41,7 @@ from .agents import score_events_for_symbols, risk_officer_check
 from .optimizer import solve_weights, scale_to_target_vol
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
 from .universe import build_universe, load_top50_etfs
+from .long_term_investor import build_long_term_outlook
 from .datafeed import get_daily_bars
 
 logger = logging.getLogger(__name__)
@@ -360,16 +361,23 @@ def run_once() -> dict:
     ranked_symbols = list(alpha_series.sort_values(ascending=False).index)
     top_scores = alpha_series.sort_values(ascending=False).head(10)
     event_details_map = (llm_meta.get("details") or {}) if isinstance(llm_meta, dict) else {}
-    diag["top_candidates"] = [
-        {
-            "symbol": str(sym),
-            "score": float(score),
-            "factor_bps": float(factor_series.get(sym, 0.0)),
-            "event_bps": float(event_series.get(sym, 0.0)),
-            "event_summary": (event_details_map.get(sym, {}) or {}).get("summary"),
-        }
-        for sym, score in top_scores.items()
-    ]
+    diag_top_candidates = []
+    for sym, score in top_scores.items():
+        row = panel.loc[sym] if sym in panel.index else {}
+        diag_top_candidates.append(
+            {
+                "symbol": str(sym),
+                "score": float(score),
+                "factor_bps": float(factor_series.get(sym, 0.0)),
+                "event_bps": float(event_series.get(sym, 0.0)),
+                "event_summary": (event_details_map.get(sym, {}) or {}).get("summary"),
+                "value_gap": float(row.get("value_gap", np.nan)) if hasattr(row, "get") else np.nan,
+                "quality": float(row.get("qual126", np.nan)) if hasattr(row, "get") else np.nan,
+                "volatility": float(row.get("vol63", np.nan)) if hasattr(row, "get") else np.nan,
+                "macro_resilience": float(row.get("beta_to_market", np.nan)) if hasattr(row, "get") else np.nan,
+            }
+        )
+    diag["top_candidates"] = diag_top_candidates
     alpha_breakdown = {
         "per_symbol_bps": {
             s: {
@@ -386,6 +394,18 @@ def run_once() -> dict:
         },
     }
     alpha_vec = alpha.reindex(candidates).fillna(0).values
+
+    long_term_symbols = ranked_symbols[: max(int(cfg.TARGET_POSITIONS), 1)]
+    try:
+        long_term_report = build_long_term_outlook(
+            panel,
+            long_term_symbols,
+            bars.get("SPY") if isinstance(bars, dict) else None,
+            event_details_map,
+        )
+    except Exception as _lt_err:
+        long_term_report = {"error": str(_lt_err)}
+    diag["long_term_analysis"] = long_term_report
 
     cur_mv_map, equity_prev, last_prices_live = _current_positions(trade_client)
     invested_prev = sum(abs(v) for v in cur_mv_map.values()) or 1.0
@@ -880,6 +900,7 @@ def run_once() -> dict:
         "diag": diag,
         "friendly_reasons": friendly_reasons,
         "market_commentary": market_commentary,
+        "long_term_analysis": long_term_report,
     }
     ep["event_ai"] = {
         "model": llm_meta.get("model"),
