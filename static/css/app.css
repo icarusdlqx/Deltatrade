@@ -222,6 +222,47 @@ main {
   border-color: rgba(148, 163, 199, 0.25);
 }
 
+.signal-card {
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(37, 99, 235, 0.28);
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.signal-card .signal-header {
+  font-weight: 600;
+  color: var(--color-text);
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.signal-card .signal-meta {
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  margin-top: 0.2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.signal-card .signal-body {
+  margin-top: 0.45rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.log-llm-explain {
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-radius: 1rem;
+  padding: 0.85rem 1.1rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.92);
+}
+
 .positions-table td,
 .positions-table th {
   vertical-align: middle;

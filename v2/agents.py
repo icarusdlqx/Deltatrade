@@ -53,17 +53,69 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
         "reason": None,
     }
 
+    details: Dict[str, Dict[str, object]] = {}
+    summaries: List[str] = []
+
+    def record_detail(sym: str,
+                      *,
+                      bps: float = 0.0,
+                      direction: int = 0,
+                      magnitude: str = "low",
+                      confidence: float = 0.0,
+                      half_life_days: int = 0,
+                      rationale: List[str] | None = None,
+                      risks: List[str] | None = None,
+                      raw_response: str | None = None,
+                      note: str | None = None) -> None:
+        action = "Neutral"
+        if direction > 0:
+            action = "Buy tilt"
+        elif direction < 0:
+            action = "Sell tilt"
+        conf_pct = int(round(max(0.0, min(1.0, confidence)) * 100))
+        rationale_list = [str(r).strip() for r in (rationale or []) if str(r).strip()]
+        risks_list = [str(r).strip() for r in (risks or []) if str(r).strip()]
+        rationale_txt = "; ".join(rationale_list) if rationale_list else "No explicit rationale provided."
+        risks_txt = "; ".join(risks_list) if risks_list else "No key risks highlighted."
+        note_txt = (note or "LLM provided structured score.").strip()
+        summary = (
+            f"{sym}: {action} {bps:+.1f} bps (magnitude {magnitude}, confidence {conf_pct}%, "
+            f"half-life {half_life_days}d). {note_txt} Rationale: {rationale_txt}. Risks: {risks_txt}."
+        )
+        detail = {
+            "symbol": sym,
+            "bps": float(bps),
+            "direction": int(direction),
+            "magnitude": str(magnitude),
+            "confidence": float(confidence),
+            "half_life_days": int(half_life_days),
+            "rationale": rationale_list,
+            "risks": risks_list,
+            "raw_response": raw_response,
+            "summary": summary,
+            "note": note_txt,
+        }
+        details[sym] = detail
+        summaries.append(summary)
+
+    def neutral_meta(reason: str) -> Tuple[Dict[str, float], Dict[str, object]]:
+        for sym in symbols:
+            record_detail(sym, note=f"{reason} Score held neutral (0.0 bps).")
+        meta["details"] = details
+        meta["summaries"] = summaries
+        return {s: 0.0 for s in symbols}, meta
+
     if not os.getenv("OPENAI_API_KEY"):
         meta["reason"] = "no_api_key"
         log.info("llm_skip", extra={"why": meta["reason"], "n_tickers": n_tickers})
-        return {s: 0.0 for s in symbols}, meta
+        return neutral_meta("Skipped LLM scoring (no API key).")
 
     try:
         cli = _client()
     except Exception:
         meta["reason"] = "client_init_failed"
         log.info("llm_skip", extra={"why": meta["reason"], "n_tickers": n_tickers})
-        return {s: 0.0 for s in symbols}, meta
+        return neutral_meta("Skipped LLM scoring (OpenAI client unavailable).")
 
     out: Dict[str, float] = {}
     schema = {
@@ -86,6 +138,7 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
     for sym, items in news_by_symbol.items():
         if not items:
             out[sym] = 0.0
+            record_detail(sym, note="No recent news items to score. Score held neutral (0.0 bps).")
             continue
         text = "\n".join([f"- {i.get('headline','')} :: {i.get('summary','')}" for i in items[:20]])
         try:
@@ -105,14 +158,32 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
             bps = es.direction * float(es.confidence) * float(bps_map.get(es.magnitude, 0))
             bps = max(-max_abs_bps, min(max_abs_bps, bps))
             out[sym] = float(bps)
+            record_detail(
+                sym,
+                bps=bps,
+                direction=es.direction,
+                magnitude=es.magnitude,
+                confidence=es.confidence,
+                half_life_days=es.half_life_days,
+                rationale=list(es.rationale or []),
+                risks=list(es.risks or []),
+                raw_response=raw,
+            )
             usage = getattr(resp, "usage", None)
             if usage is not None:
                 tokens = getattr(usage, "total_tokens", None)
                 if tokens is not None:
                     total_tokens += int(tokens)
             meta["called"] = True
-        except Exception:
+            log.info("event_score_detail %s", details[sym]["summary"])
+        except Exception as exc:
             out[sym] = 0.0
+            log.warning("event_score_failed for %s: %s", sym, exc)
+            record_detail(
+                sym,
+                note=f"Failed to parse LLM response ({type(exc).__name__}). Score held neutral (0.0 bps).",
+                raw_response=None,
+            )
     if meta.get("called"):
         meta["tokens"] = total_tokens
         record_assessment()
@@ -131,6 +202,8 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
             "llm_skip",
             extra={"why": meta["reason"], "model": model_name, "n_tickers": n_tickers},
         )
+    meta["details"] = details
+    meta["summaries"] = summaries
     return out, meta
 
 def risk_officer_check(proposed: Dict[str, float], sector_map: Dict[str, str], sector_max: float, name_max: float) -> Dict[str, str]:
