@@ -388,7 +388,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     net = float(gate.get("net_bps") or latest.get("net_edge_bps", 0.0) or 0.0)
     turnover_pct = float(gate.get("turnover_pct") or 0.0)
     order_count = int(gate.get("order_count") or latest.get("planned_orders_count", 0) or 0)
-    reasons_raw = gate.get("reasons") or []
+    reasons_raw = gate.get("friendly_reasons") or gate.get("reasons") or []
     if isinstance(reasons_raw, list):
         reasons = [str(r) for r in reasons_raw if r]
     elif reasons_raw:
@@ -403,19 +403,23 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     else:
         actual_orders = []
     traded = len(actual_orders) > 0
+    market_commentary = str(latest.get("market_commentary") or "").strip()
+
     if traded:
         summary = "Traded {count} orders · net {net:.1f} bps after {cost:.1f} bps costs · turnover {turnover:.1f}%".format(
             count=len(actual_orders), net=net, cost=cost, turnover=turnover_pct
         )
-        plain = "Placed {count} orders; turnover {turnover:.1f}%; exp {expected:.1f} bps → net {net:.1f} bps.".format(
-            count=len(actual_orders), turnover=turnover_pct, expected=expected, net=net
+        plain = market_commentary or (
+            "Placed {count} orders; turnover {turnover:.1f}%; exp {expected:.1f} bps → net {net:.1f} bps.".format(
+                count=len(actual_orders), turnover=turnover_pct, expected=expected, net=net
+            )
         )
     else:
         reason_text = ", ".join(reasons) if reasons else "none"
         summary = (
             "Skipped — reasons: {reasons}; gate math: exp {expected:.1f} bps, cost {cost:.1f} bps, net {net:.1f} bps"
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
-        plain = (
+        plain = market_commentary or (
             "Skipped — reasons: {reasons}. Gate: exp {expected:.1f}, cost {cost:.1f}, net {net:.1f} bps."
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
 
@@ -442,6 +446,7 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         "proceed_final": proceed_final,
         "actual_orders": len(actual_orders),
         "advisor_summary": advisor_summary,
+        "market_commentary": market_commentary,
     }
 
 
@@ -833,6 +838,7 @@ def log_csv():
         "risk_officer_approved",
         "proceed_final",
         "reasons",
+        "friendly_reasons",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -845,6 +851,13 @@ def log_csv():
             reasons_str = str(reasons_raw)
         else:
             reasons_str = ""
+        friendly_raw = gate.get("friendly_reasons") or ep.get("friendly_reasons") or []
+        if isinstance(friendly_raw, list):
+            friendly_str = ";".join(str(r) for r in friendly_raw if r)
+        elif friendly_raw:
+            friendly_str = str(friendly_raw)
+        else:
+            friendly_str = ""
         writer.writerow({
             "timestamp": ep.get("as_of", ""),
             "mode": gate.get("mode"),
@@ -865,6 +878,7 @@ def log_csv():
             "risk_officer_approved": gate.get("risk_officer_approved"),
             "proceed_final": ep.get("proceed"),
             "reasons": reasons_str,
+            "friendly_reasons": friendly_str,
         })
     response = Response(output.getvalue(), mimetype="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=log.csv"

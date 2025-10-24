@@ -78,6 +78,12 @@ def test_score_events_invokes_openai_with_reasoning(monkeypatch):
     assert scores["AAPL"] == pytest.approx(6.0)
     assert meta["called"] is True
     assert meta["tokens"] == 42
+    assert "AAPL" in meta["details"]
+    detail = meta["details"]["AAPL"]
+    assert detail["bps"] == pytest.approx(6.0)
+    assert "Buy tilt" in detail["summary"]
+    assert "Earnings beat" in detail["summary"]
+    assert isinstance(meta["summaries"], list) and meta["summaries"], "summary list populated"
 
 
 def test_successful_assessment_records_timestamp(tmp_path, monkeypatch):
@@ -110,3 +116,6 @@ def test_successful_assessment_records_timestamp(tmp_path, monkeypatch):
     assert "ts_iso" in saved and isinstance(saved["ts_iso"], str)
     assert meta["called"] is True
     assert scores["MSFT"] == pytest.approx(-7.0)
+    msft_detail = meta["details"].get("MSFT")
+    assert msft_detail and "Sell tilt" in msft_detail["summary"]
+    assert msft_detail["bps"] == pytest.approx(-7.0)
