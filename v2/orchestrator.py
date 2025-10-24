@@ -34,7 +34,7 @@ from .config import (
     VOL_TARGET_ANNUAL,
 )
 from .settings_bridge import get_cfg, get_settings
-from .utils import write_jsonl, read_json, write_json
+from .utils import write_jsonl, read_json, write_json, ann_vol_from_daily, max_drawdown
 from .features import compute_panel, bars_from_multiindex
 from .news import fetch_news_map
 from .agents import score_events_for_symbols, risk_officer_check
@@ -45,6 +45,192 @@ from .datafeed import get_daily_bars
 
 logger = logging.getLogger(__name__)
 log = logger
+
+
+def _reason_to_friendly(
+    code: str,
+    *,
+    expected_alpha_bps: float,
+    cost_bps: float,
+    net_bps: float,
+    min_net_bps: float,
+    order_count: int,
+    risk_message: str | None,
+    turnover_pct: float,
+    cash_frac: float,
+) -> str:
+    """Convert terse gate codes into plain-English explanations."""
+
+    code = str(code or "").strip()
+    if not code:
+        return ""
+
+    if code == "no_orders":
+        if order_count <= 0:
+            return "Portfolio already matched the targets, so no trades were needed."
+        return "Optimizer produced orders, but all were filtered out before execution."
+    if code == "net_below_min":
+        threshold = f"{min_net_bps:.1f}" if min_net_bps else "the minimum"
+        return (
+            "Estimated net edge was {net:.1f} bps after {cost:.1f} bps costs, below {threshold} bps, so trading would likely lose money.".format(
+                net=net_bps,
+                cost=cost_bps,
+                threshold=threshold,
+            )
+        )
+    if code == "risk_officer_blocked":
+        if risk_message:
+            return f"Risk officer blocked the plan: {risk_message}."
+        return "Risk officer checks blocked the plan because a limit would have been breached."
+    if code == "fallback_portfolio":
+        return "Signals were weak, so the optimizer fell back to a simple diversified basket."
+    if code == "onboarding":
+        return "Cash was {cash:.1f}% of equity, so the system treated the run as onboarding to build initial positions.".format(
+            cash=cash_frac * 100.0
+        )
+    if code == "turnover_cap":
+        return "Projected turnover of {turnover:.1f}% breached the cap, so the system pruned orders.".format(
+            turnover=turnover_pct
+        )
+    if code == "macro_regime_caution":
+        return (
+            "Macro regime flagged elevated downside risk, so the system is waiting for stronger conviction before reallocating."
+        )
+    # Fallback: provide a human-readable form of the code
+    return code.replace("_", " ")
+
+
+def _compose_market_commentary(
+    *,
+    top_candidates: list[dict],
+    factor_total_bps: float,
+    event_total_bps: float,
+    expected_alpha_bps: float,
+    cost_bps: float,
+    net_bps: float,
+    friendly_reasons: list[str],
+    risk_message: str | None,
+    target_slots: int,
+    macro_summary: dict | None = None,
+) -> str:
+    """Return a short paragraph describing what the AI saw and why it acted."""
+
+    pieces: list[str] = []
+
+    if macro_summary:
+        macro_text = macro_summary.get("narrative")
+        if macro_text:
+            pieces.append(macro_text)
+
+    if top_candidates:
+        names: list[str] = []
+        limit = min(len(top_candidates), max(1, target_slots))
+        for item in top_candidates[:limit]:
+            sym = item.get("symbol")
+            total = float(item.get("score", 0.0) or 0.0)
+            factor = float(item.get("factor_bps", 0.0) or 0.0)
+            event = float(item.get("event_bps", 0.0) or 0.0)
+            names.append(
+                f"{sym} ({total:+.1f} bps total: factor {factor:+.1f}, event {event:+.1f})"
+            )
+        if names:
+            pieces.append(
+                "Top-ranked opportunities for the {slots}-slot book were {names}.".format(
+                    slots=target_slots,
+                    names=", ".join(names),
+                )
+            )
+
+    pieces.append(
+        "Factor signals summed to {factor:+.1f} bps and event/news signals contributed {event:+.1f} bps.".format(
+            factor=factor_total_bps,
+            event=event_total_bps,
+        )
+    )
+    pieces.append(
+        "That implied {expected:.1f} bps of edge before trading costs of {cost:.1f} bps, leaving {net:.1f} bps net.".format(
+            expected=expected_alpha_bps,
+            cost=cost_bps,
+            net=net_bps,
+        )
+    )
+
+    if friendly_reasons:
+        pieces.append(f"Decision: {friendly_reasons[0]}")
+    else:
+        if net_bps <= 0:
+            pieces.append("Decision: held positions because the math did not justify trading.")
+        else:
+            pieces.append("Decision: proceeded with orders based on the positive edge.")
+
+    if risk_message:
+        pieces.append(f"Risk officer: {risk_message}")
+
+    return " ".join(pieces)
+
+
+def _assess_macro_regime(bars: Dict[str, pd.DataFrame], spy: str = "SPY") -> dict:
+    df = bars.get(spy)
+    if df is None or df.empty or "close" not in df.columns:
+        return {}
+
+    px = df["close"].dropna()
+    if len(px) < 60:
+        return {}
+
+    ret = px.pct_change()
+    ret63 = (px.iloc[-1] / px.iloc[-64] - 1.0) if len(px) > 64 else np.nan
+    ret252 = (px.iloc[-1] / px.iloc[-253] - 1.0) if len(px) > 253 else np.nan
+    vol63 = ann_vol_from_daily(ret.tail(63))
+    drawdown = max_drawdown(ret.tail(252)) if len(ret) >= 252 else max_drawdown(ret)
+
+    ma200 = px.rolling(200, min_periods=40).mean()
+    if not ma200.dropna().empty:
+        slope = (ma200.iloc[-1] / ma200.iloc[-21] - 1.0) if len(ma200.dropna()) > 21 else 0.0
+    else:
+        slope = 0.0
+
+    label = "neutral"
+    edge_buffer = 0.0
+    if np.isfinite(ret63) and ret63 < -0.05:
+        label = "correction"
+        edge_buffer = 8.0
+    if np.isfinite(slope) and slope < 0:
+        label = "correction"
+        edge_buffer = max(edge_buffer, 8.0)
+    if np.isfinite(ret252) and ret252 > 0.08 and slope > 0:
+        label = "expansion"
+        edge_buffer = 0.0
+
+    summary_parts: list[str] = []
+    if np.isfinite(ret252):
+        summary_parts.append(f"SPY {ret252 * 100:.1f}% over 12M")
+    if np.isfinite(ret63):
+        summary_parts.append(f"{ret63 * 100:.1f}% over 3M")
+    if vol63:
+        summary_parts.append(f"vol {vol63 * 100:.1f}% annualized")
+    if np.isfinite(drawdown):
+        summary_parts.append(f"max drawdown {drawdown * 100:.1f}%")
+
+    regime_text = {
+        "expansion": "Macro regime: expansion – the broad market trend is constructive.",
+        "neutral": "Macro regime: neutral – signals are mixed, so position sizing stays disciplined.",
+        "correction": "Macro regime: correction – defensive stance until conviction improves.",
+    }.get(label, "")
+
+    metrics_text = ", ".join(summary_parts)
+    narrative = f"{regime_text} Key stats: {metrics_text}." if regime_text else f"Key stats: {metrics_text}."
+
+    return {
+        "label": label,
+        "ret_3m": float(ret63) if np.isfinite(ret63) else None,
+        "ret_12m": float(ret252) if np.isfinite(ret252) else None,
+        "vol_3m": float(vol63),
+        "drawdown": float(drawdown),
+        "slope_200d": float(slope),
+        "edge_buffer_bps": float(edge_buffer),
+        "narrative": narrative,
+    }
 
 def _alpaca_clients():
     api_key = os.environ.get("ALPACA_API_KEY")
@@ -179,11 +365,20 @@ def run_once() -> dict:
     if "SPY" not in symbols and "SPY" in bars:
         symbols.append("SPY")
 
-    panel = compute_panel(bars, spy="SPY", fast=cfg.TREND_FAST, slow=cfg.TREND_SLOW,
-                          resid_lookback=cfg.RESID_MOM_LOOKBACK, reversal_days=cfg.REVERSAL_DAYS,
-                          winsor_pct=cfg.WINSOR_PCT).dropna(subset=["last_price"]).sort_values("score_z", ascending=False)
+    panel = compute_panel(
+        bars,
+        spy="SPY",
+        fast=cfg.TREND_FAST,
+        slow=cfg.TREND_SLOW,
+        resid_lookback=cfg.RESID_MOM_LOOKBACK,
+        reversal_days=cfg.REVERSAL_DAYS,
+        winsor_pct=cfg.WINSOR_PCT,
+    ).dropna(subset=["last_price"]).sort_values("score_z", ascending=False)
     valid_df = panel
     diag["stage"]["valid_features"] = int(len(valid_df))
+
+    regime_summary = _assess_macro_regime(bars)
+    diag["macro_regime"] = regime_summary
 
     # Event-driven alpha
     openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -214,6 +409,15 @@ def run_once() -> dict:
     diag["stage"]["llm_tokens"] = int(llm_meta.get("tokens") or 0)
     diag["stage"]["llm_model"] = llm_meta.get("model")
     diag["stage"]["llm_effort"] = llm_meta.get("effort")
+    diag["event_ai"] = {
+        "model": llm_meta.get("model"),
+        "effort": llm_meta.get("effort"),
+        "called": bool(llm_meta.get("called")),
+        "tokens": int(llm_meta.get("tokens") or 0),
+        "reason": llm_meta.get("reason"),
+        "summaries": list(llm_meta.get("summaries") or []),
+        "details": llm_meta.get("details") or {},
+    }
 
     # Factor + event blend
     factor_alpha_bps = 8.0 * panel["score_z"].fillna(0)
@@ -230,16 +434,57 @@ def run_once() -> dict:
     df_ret = df_ret[common_syms]
     Sigma = df_ret.cov().values
 
-    # Candidate cut
-    candidates = common_syms[:max(int(cfg.TARGET_POSITIONS)*2, int(cfg.TARGET_POSITIONS))]
+    # Candidate cut prioritising positive long-term conviction
+    ordered_syms = [sym for sym in panel.index if sym in common_syms]
+    long_term_series = panel.get("score_long_term") if "score_long_term" in panel.columns else None
+    preferred_syms: list[str] = []
+    if isinstance(long_term_series, pd.Series):
+        preferred_syms = [sym for sym in ordered_syms if float(long_term_series.get(sym, 0.0)) > 0]
+    if not preferred_syms:
+        preferred_syms = ordered_syms
+    fallback_syms = [sym for sym in ordered_syms if sym not in preferred_syms]
+    candidate_pool = preferred_syms + fallback_syms
+    top_span = max(int(cfg.TARGET_POSITIONS) * 2, int(cfg.TARGET_POSITIONS))
+    candidates = candidate_pool[:top_span]
     diag["stage"]["candidates_topN"] = int(len(candidates))
     factor_series = factor_component.reindex(candidates).fillna(0.0)
     event_series = event_component.reindex(candidates).fillna(0.0)
     alpha_series = alpha_bps.reindex(candidates).fillna(0.0)
+    thesis_series = panel["long_term_thesis"] if "long_term_thesis" in panel.columns else pd.Series(dtype=object)
+    lt_score_series = panel["score_long_term"] if "score_long_term" in panel.columns else pd.Series(dtype=float)
+
+    def _thesis_for(sym: str) -> str | None:
+        if isinstance(thesis_series, pd.Series) and sym in thesis_series.index:
+            val = thesis_series.get(sym)
+            if val is None:
+                return None
+            if isinstance(val, float) and np.isnan(val):
+                return None
+            return str(val)
+        return None
+
+    def _lt_score_for(sym: str) -> float | None:
+        if isinstance(lt_score_series, pd.Series) and sym in lt_score_series.index:
+            val = lt_score_series.get(sym)
+            if val is None:
+                return None
+            if isinstance(val, float) and np.isnan(val):
+                return None
+            return float(val)
+        return None
     ranked_symbols = list(alpha_series.sort_values(ascending=False).index)
     top_scores = alpha_series.sort_values(ascending=False).head(10)
+    event_details_map = (llm_meta.get("details") or {}) if isinstance(llm_meta, dict) else {}
     diag["top_candidates"] = [
-        {"symbol": str(sym), "score": float(score)}
+        {
+            "symbol": str(sym),
+            "score": float(score),
+            "factor_bps": float(factor_series.get(sym, 0.0)),
+            "event_bps": float(event_series.get(sym, 0.0)),
+            "event_summary": (event_details_map.get(sym, {}) or {}).get("summary"),
+            "long_term_thesis": _thesis_for(sym),
+            "long_term_score": _lt_score_for(sym),
+        }
         for sym, score in top_scores.items()
     ]
     alpha_breakdown = {
@@ -310,6 +555,7 @@ def run_once() -> dict:
     diag_stage["optimizer_nonzero"] = int(np.sum(np.abs(w_scaled) > 1e-6))
 
     target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
+    target_weights = {s: max(0.0, w) for s, w in target_weights.items()}
 
     settings_dict = get_settings()
     target_slots = int(settings_dict.get("TARGET_POSITIONS", TARGET_POSITIONS))
@@ -535,6 +781,17 @@ def run_once() -> dict:
     force_onboard = (len(planned_orders) > 0) and ((cash_frac >= 0.90) or (not has_positions))
     if force_onboard:
         passes_net = True
+    macro_caution = False
+    macro_buffer = float((regime_summary or {}).get("edge_buffer_bps") or 0.0)
+    if regime_summary and regime_summary.get("label") == "correction" and len(planned_orders) > 0:
+        threshold = max(min_net_bps_to_trade, macro_buffer)
+        if net_bps < threshold and not force_onboard:
+            macro_caution = True
+            passes_net = False
+    if isinstance(regime_summary, dict):
+        regime_summary.setdefault("applied_gate", False)
+        if macro_caution:
+            regime_summary["applied_gate"] = True
     proceed = (len(planned_orders) > 0) and passes_net
 
     reasons: List[str] = []
@@ -546,6 +803,10 @@ def run_once() -> dict:
         reasons.append("onboarding")
     if diag.get("stage", {}).get("fallback_used"):
         reasons.append("fallback_portfolio")
+    if macro_caution and "macro_regime_caution" not in reasons:
+        reasons.append("macro_regime_caution")
+        if isinstance(regime_summary, dict):
+            regime_summary["gate_applied"] = True
 
     if force_onboard:
         log.info("onboarding", extra={"cash_frac": cash_frac, "reason": "initial allocation from cash"})
@@ -592,7 +853,7 @@ def run_once() -> dict:
     )
     model_name = os.getenv("MODEL_NAME") or os.getenv("OPENAI_MODEL") or C.OPENAI_MODEL
     effort = os.getenv("REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") or C.OPENAI_REASONING_EFFORT
-    regime = locals().get("regime_summary", {})
+    regime = regime_summary or {}
     target_gross = sum(abs(w) for w in target_weights.values())
     exposure = {
         "target_gross": float(target_gross),
@@ -605,6 +866,44 @@ def run_once() -> dict:
         if r != "onboarding":
             gate_reason = r
             break
+
+    risk_message = risk_officer_verdict.get("message") or roc.get("message") if isinstance(roc, dict) else None
+
+    friendly_reasons = [
+        _reason_to_friendly(
+            r,
+            expected_alpha_bps=expected_alpha_bps,
+            cost_bps=cost_bps,
+            net_bps=net_bps,
+            min_net_bps=min_net_bps_to_trade,
+            order_count=len(planned_orders),
+            risk_message=risk_message,
+            turnover_pct=turnover_pct,
+            cash_frac=cash_frac,
+        )
+        for r in reasons
+    ]
+    friendly_reasons = [txt for txt in friendly_reasons if txt]
+
+    diag.setdefault("stage", {})
+    diag["friendly_reasons"] = friendly_reasons
+
+    sleeve_totals = (alpha_breakdown.get("sleeve_totals_bps") if isinstance(alpha_breakdown, dict) else {}) or {}
+    factor_total = float(sleeve_totals.get("factor", 0.0) or 0.0)
+    event_total = float(sleeve_totals.get("event", 0.0) or 0.0)
+    market_commentary = _compose_market_commentary(
+        top_candidates=diag.get("top_candidates") or [],
+        factor_total_bps=factor_total,
+        event_total_bps=event_total,
+        expected_alpha_bps=expected_alpha_bps,
+        cost_bps=cost_bps,
+        net_bps=net_bps,
+        friendly_reasons=friendly_reasons,
+        risk_message=risk_message,
+        target_slots=target_slots,
+        macro_summary=regime_summary,
+    )
+    diag["market_commentary"] = market_commentary
 
     gate = {
         "mode": mode,
@@ -631,6 +930,8 @@ def run_once() -> dict:
         "regime": regime,
         "turnover_cap": float(turnover_cap),
         "reason_primary": gate_reason,
+        "reason_primary_friendly": friendly_reasons[0] if friendly_reasons else None,
+        "friendly_reasons": friendly_reasons,
         "has_positions": bool(has_positions),
     }
 
@@ -711,6 +1012,17 @@ def run_once() -> dict:
         "simulated": bool(getattr(trade_client, "is_simulated", False)),
         "gate": gate,
         "diag": diag,
+        "friendly_reasons": friendly_reasons,
+        "market_commentary": market_commentary,
+    }
+    ep["event_ai"] = {
+        "model": llm_meta.get("model"),
+        "effort": llm_meta.get("effort"),
+        "called": bool(llm_meta.get("called")),
+        "tokens": int(llm_meta.get("tokens") or 0),
+        "reason": llm_meta.get("reason"),
+        "summaries": list(llm_meta.get("summaries") or []),
+        "details": llm_meta.get("details") or {},
     }
     write_jsonl(C.EPISODES_PATH, ep)
     return ep
