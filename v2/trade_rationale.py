@@ -32,6 +32,19 @@ def _from_news(ep: Dict[str, Any]) -> str:
     return "Neutral macro/news stance."
 
 
+def _from_long_term(ep: Dict[str, Any], sym: str) -> str:
+    analysis = (ep or {}).get("long_term_analysis") or (ep or {}).get("diag", {}).get("long_term_analysis")
+    if not isinstance(analysis, dict):
+        return ""
+    theses = analysis.get("theses") if isinstance(analysis.get("theses"), dict) else {}
+    thesis = theses.get(sym.upper()) or theses.get(sym)
+    if isinstance(thesis, dict):
+        summary = thesis.get("summary") or ""
+        if summary:
+            return summary[:600]
+    return ""
+
+
 def _from_model(ep: Dict[str, Any], sym: str) -> str:
     sig = (ep or {}).get("signals", {}).get(sym.upper())
     if isinstance(sig, dict):
@@ -55,7 +68,7 @@ def attach_order_rationales(ep: Dict[str, Any]) -> Dict[str, Any]:
             sym = str(od.get("symbol") or od.get("ticker") or "").upper()
             if not sym:
                 continue
-            why = _from_web_report(ep, sym) or _from_model(ep, sym) or _from_news(ep)
+            why = _from_long_term(ep, sym) or _from_web_report(ep, sym) or _from_model(ep, sym) or _from_news(ep)
             if not why:
                 why = "Order placed based on portfolio signals and constraints."
             rationales[sym] = why[:600]
