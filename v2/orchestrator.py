@@ -214,6 +214,15 @@ def run_once() -> dict:
     diag["stage"]["llm_tokens"] = int(llm_meta.get("tokens") or 0)
     diag["stage"]["llm_model"] = llm_meta.get("model")
     diag["stage"]["llm_effort"] = llm_meta.get("effort")
+    diag["event_ai"] = {
+        "model": llm_meta.get("model"),
+        "effort": llm_meta.get("effort"),
+        "called": bool(llm_meta.get("called")),
+        "tokens": int(llm_meta.get("tokens") or 0),
+        "reason": llm_meta.get("reason"),
+        "summaries": list(llm_meta.get("summaries") or []),
+        "details": llm_meta.get("details") or {},
+    }
 
     # Factor + event blend
     factor_alpha_bps = 8.0 * panel["score_z"].fillna(0)
@@ -238,8 +247,15 @@ def run_once() -> dict:
     alpha_series = alpha_bps.reindex(candidates).fillna(0.0)
     ranked_symbols = list(alpha_series.sort_values(ascending=False).index)
     top_scores = alpha_series.sort_values(ascending=False).head(10)
+    event_details_map = (llm_meta.get("details") or {}) if isinstance(llm_meta, dict) else {}
     diag["top_candidates"] = [
-        {"symbol": str(sym), "score": float(score)}
+        {
+            "symbol": str(sym),
+            "score": float(score),
+            "factor_bps": float(factor_series.get(sym, 0.0)),
+            "event_bps": float(event_series.get(sym, 0.0)),
+            "event_summary": (event_details_map.get(sym, {}) or {}).get("summary"),
+        }
         for sym, score in top_scores.items()
     ]
     alpha_breakdown = {
@@ -711,6 +727,15 @@ def run_once() -> dict:
         "simulated": bool(getattr(trade_client, "is_simulated", False)),
         "gate": gate,
         "diag": diag,
+    }
+    ep["event_ai"] = {
+        "model": llm_meta.get("model"),
+        "effort": llm_meta.get("effort"),
+        "called": bool(llm_meta.get("called")),
+        "tokens": int(llm_meta.get("tokens") or 0),
+        "reason": llm_meta.get("reason"),
+        "summaries": list(llm_meta.get("summaries") or []),
+        "details": llm_meta.get("details") or {},
     }
     write_jsonl(C.EPISODES_PATH, ep)
     return ep

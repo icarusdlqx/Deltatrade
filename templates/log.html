@@ -138,6 +138,8 @@
         {% set net_class = 'text-success' if net > 0 else ('text-danger' if net < 0 else '') %}
         {% set top = (diag.get('top_candidates') or [])[:3] %}
         {% set exposure_diag = diag.get('exposure', {}) or {} %}
+        {% set event_ai = (diag.get('event_ai') or ep.get('event_ai') or {}) %}
+        {% set ai_summaries = event_ai.get('summaries') or [] %}
         {% set exposure_gate = gate.get('exposure', {}) or {} %}
         {% set sum_abs = exposure_diag.get('sum_abs_weights') or exposure_gate.get('sum_abs_weights') or exposure_gate.get('target_gross') or 0 %}
         <article class="log-entry">
@@ -220,9 +222,25 @@
           {% if top %}
           <div class="mt-3">
             <div class="text-muted small mb-1">Top signals</div>
-            <div class="log-order-list">
+            <div class="d-flex flex-column gap-2">
               {% for item in top %}
-                <span class="status-pill neutral">{{ item.get('symbol') }} {{ '%.1f'|format(item.get('score', 0) | float) }}</span>
+              <div class="signal-card">
+                <div class="signal-header"><strong>{{ item.get('symbol') }}</strong> · {{ '%.1f'|format(item.get('score', 0) | float) }} bps</div>
+                <div class="signal-meta">Factor {{ '%.1f'|format(item.get('factor_bps', 0) | float) }} · Event {{ '%.1f'|format(item.get('event_bps', 0) | float) }}</div>
+                {% if item.get('event_summary') %}
+                <div class="signal-body text-muted">{{ item.get('event_summary') }}</div>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+          {% if ai_summaries %}
+          <div class="mt-3">
+            <div class="text-muted small mb-1">AI event rationale</div>
+            <div class="d-flex flex-column gap-2">
+              {% for summary in ai_summaries[:6] %}
+              <div class="log-llm-explain">{{ summary }}</div>
               {% endfor %}
             </div>
           </div>
