@@ -46,6 +46,118 @@ from .datafeed import get_daily_bars
 logger = logging.getLogger(__name__)
 log = logger
 
+
+def _reason_to_friendly(
+    code: str,
+    *,
+    expected_alpha_bps: float,
+    cost_bps: float,
+    net_bps: float,
+    min_net_bps: float,
+    order_count: int,
+    risk_message: str | None,
+    turnover_pct: float,
+    cash_frac: float,
+) -> str:
+    """Convert terse gate codes into plain-English explanations."""
+
+    code = str(code or "").strip()
+    if not code:
+        return ""
+
+    if code == "no_orders":
+        if order_count <= 0:
+            return "Portfolio already matched the targets, so no trades were needed."
+        return "Optimizer produced orders, but all were filtered out before execution."
+    if code == "net_below_min":
+        threshold = f"{min_net_bps:.1f}" if min_net_bps else "the minimum"
+        return (
+            "Estimated net edge was {net:.1f} bps after {cost:.1f} bps costs, below {threshold} bps, so trading would likely lose money.".format(
+                net=net_bps,
+                cost=cost_bps,
+                threshold=threshold,
+            )
+        )
+    if code == "risk_officer_blocked":
+        if risk_message:
+            return f"Risk officer blocked the plan: {risk_message}."
+        return "Risk officer checks blocked the plan because a limit would have been breached."
+    if code == "fallback_portfolio":
+        return "Signals were weak, so the optimizer fell back to a simple diversified basket."
+    if code == "onboarding":
+        return "Cash was {cash:.1f}% of equity, so the system treated the run as onboarding to build initial positions.".format(
+            cash=cash_frac * 100.0
+        )
+    if code == "turnover_cap":
+        return "Projected turnover of {turnover:.1f}% breached the cap, so the system pruned orders.".format(
+            turnover=turnover_pct
+        )
+    # Fallback: provide a human-readable form of the code
+    return code.replace("_", " ")
+
+
+def _compose_market_commentary(
+    *,
+    top_candidates: list[dict],
+    factor_total_bps: float,
+    event_total_bps: float,
+    expected_alpha_bps: float,
+    cost_bps: float,
+    net_bps: float,
+    friendly_reasons: list[str],
+    risk_message: str | None,
+    target_slots: int,
+) -> str:
+    """Return a short paragraph describing what the AI saw and why it acted."""
+
+    pieces: list[str] = []
+
+    if top_candidates:
+        names: list[str] = []
+        limit = min(len(top_candidates), max(1, target_slots))
+        for item in top_candidates[:limit]:
+            sym = item.get("symbol")
+            total = float(item.get("score", 0.0) or 0.0)
+            factor = float(item.get("factor_bps", 0.0) or 0.0)
+            event = float(item.get("event_bps", 0.0) or 0.0)
+            names.append(
+                f"{sym} ({total:+.1f} bps total: factor {factor:+.1f}, event {event:+.1f})"
+            )
+        if names:
+            pieces.append(
+                "Top-ranked opportunities for the {slots}-slot book were {names}.".format(
+                    slots=target_slots,
+                    names=", ".join(names),
+                )
+            )
+
+    pieces.append(
+        "Factor signals summed to {factor:+.1f} bps and event/news signals contributed {event:+.1f} bps.".format(
+            factor=factor_total_bps,
+            event=event_total_bps,
+        )
+    )
+    pieces.append(
+        "That implied {expected:.1f} bps of edge before trading costs of {cost:.1f} bps, leaving {net:.1f} bps net.".format(
+            expected=expected_alpha_bps,
+            cost=cost_bps,
+            net=net_bps,
+        )
+    )
+
+    if friendly_reasons:
+        pieces.append(f"Decision: {friendly_reasons[0]}")
+    else:
+        if net_bps <= 0:
+            pieces.append("Decision: held positions because the math did not justify trading.")
+        else:
+            pieces.append("Decision: proceeded with orders based on the positive edge.")
+
+    if risk_message:
+        pieces.append(f"Risk officer: {risk_message}")
+
+    return " ".join(pieces)
+
 def _alpaca_clients():
     api_key = os.environ.get("ALPACA_API_KEY")
     api_sec = os.environ.get("ALPACA_SECRET_KEY")
@@ -622,6 +734,43 @@ def run_once() -> dict:
             gate_reason = r
             break
 
+    risk_message = risk_officer_verdict.get("message") or roc.get("message") if isinstance(roc, dict) else None
+
+    friendly_reasons = [
+        _reason_to_friendly(
+            r,
+            expected_alpha_bps=expected_alpha_bps,
+            cost_bps=cost_bps,
+            net_bps=net_bps,
+            min_net_bps=min_net_bps_to_trade,
+            order_count=len(planned_orders),
+            risk_message=risk_message,
+            turnover_pct=turnover_pct,
+            cash_frac=cash_frac,
+        )
+        for r in reasons
+    ]
+    friendly_reasons = [txt for txt in friendly_reasons if txt]
+
+    diag.setdefault("stage", {})
+    diag["friendly_reasons"] = friendly_reasons
+
+    sleeve_totals = (alpha_breakdown.get("sleeve_totals_bps") if isinstance(alpha_breakdown, dict) else {}) or {}
+    factor_total = float(sleeve_totals.get("factor", 0.0) or 0.0)
+    event_total = float(sleeve_totals.get("event", 0.0) or 0.0)
+    market_commentary = _compose_market_commentary(
+        top_candidates=diag.get("top_candidates") or [],
+        factor_total_bps=factor_total,
+        event_total_bps=event_total,
+        expected_alpha_bps=expected_alpha_bps,
+        cost_bps=cost_bps,
+        net_bps=net_bps,
+        friendly_reasons=friendly_reasons,
+        risk_message=risk_message,
+        target_slots=target_slots,
+    )
+    diag["market_commentary"] = market_commentary
+
     gate = {
         "mode": mode,
         "model": model_name,
@@ -647,6 +796,8 @@ def run_once() -> dict:
         "regime": regime,
         "turnover_cap": float(turnover_cap),
         "reason_primary": gate_reason,
+        "reason_primary_friendly": friendly_reasons[0] if friendly_reasons else None,
+        "friendly_reasons": friendly_reasons,
         "has_positions": bool(has_positions),
     }
 
@@ -727,6 +878,17 @@ def run_once() -> dict:
         "simulated": bool(getattr(trade_client, "is_simulated", False)),
         "gate": gate,
         "diag": diag,
+        "friendly_reasons": friendly_reasons,
+        "market_commentary": market_commentary,
+    }
+    ep["event_ai"] = {
+        "model": llm_meta.get("model"),
+        "effort": llm_meta.get("effort"),
+        "called": bool(llm_meta.get("called")),
+        "tokens": int(llm_meta.get("tokens") or 0),
+        "reason": llm_meta.get("reason"),
+        "summaries": list(llm_meta.get("summaries") or []),
+        "details": llm_meta.get("details") or {},
     }
     ep["event_ai"] = {
         "model": llm_meta.get("model"),
