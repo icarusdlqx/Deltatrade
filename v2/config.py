@@ -27,7 +27,8 @@ TREND_SLOW = 50
 REVERSAL_DAYS = 3
 WINSOR_PCT = 0.02
 
-# ================= Expert Advisor (web + memory) =================
+# ================= Value-investor advisor (web + memory) =================
+# Enable the web-search advisor with a 12-month value-investor focus
 ENABLE_WEB_ADVISOR = True
 WEB_ADVISOR_MODEL = os.getenv("WEB_ADVISOR_MODEL", "gpt-5")
 WEB_ADVISOR_DOMAIN_ALLOWLIST = [
@@ -41,11 +42,14 @@ WEB_ADVISOR_DOMAIN_ALLOWLIST = [
     "opec.org",
     "ecb.europa.eu",
     "sec.gov",
+    "investor.apple.com",
+    "ir.nvidia.com",
 ]
 WEB_ADVISOR_RECENCY_DAYS = int(os.getenv("WEB_ADVISOR_RECENCY_DAYS", "7"))
 WEB_ADVISOR_MAX_PAGES = int(os.getenv("WEB_ADVISOR_MAX_PAGES", "12"))
 ADVISOR_MAX_TRADES_PER_RUN = int(os.getenv("ADVISOR_MAX_TRADES_PER_RUN", "6"))
-MIN_HOLD_DAYS_BEFORE_SELL = int(os.getenv("MIN_HOLD_DAYS_BEFORE_SELL", "30"))
+# Long-horizon, low-churn bias
+MIN_HOLD_DAYS_BEFORE_SELL = int(os.getenv("MIN_HOLD_DAYS_BEFORE_SELL", "90"))
 EPISODES_MEMORY_LOOKBACK = int(os.getenv("EPISODES_MEMORY_LOOKBACK", "120"))
 
 # Event scoring (AI)

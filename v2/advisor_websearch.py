@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-"""Web-search-enabled expert advisor that augments daily episodes."""
+"""
+Value-investor advisor with web search.
+Focuses on 12-month theses, valuation color, and explicit citations.
+"""
 
 import json
 from datetime import datetime
@@ -52,6 +55,19 @@ SCHEMA = {
                         "action": {"type": "string", "enum": ["buy", "sell", "hold", "no_change"]},
                         "weight_target": {"type": "number"},
                         "rationale": {"type": "string"},
+                        "valuation": {
+                            "type": "object",
+                            "properties": {
+                                "pe_forward": {"type": "number"},
+                                "ev_ebitda": {"type": "number"},
+                                "fcf_yield_pct": {"type": "number"},
+                                "rev_cagr_3y_pct": {"type": "number"},
+                                "op_margin_trend": {"type": "string"},
+                                "moat": {"type": "string"},
+                                "risks": {"type": "string"},
+                                "catalysts": {"type": "string"},
+                            },
+                        },
                         "sources": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["ticker", "asset_type", "action", "rationale"],
@@ -75,26 +91,11 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT = """\
-You are Deltatrade's Chief Investment Officer.\n\
-Objective: maximize 12-month alpha versus the S&P 500 with prudent risk and low churn.\n\
-Operate in TWO phases within this ONE call:\n\
-1) Use the web_search tool to gather today's macro/regime + key catalysts:\n\
-   - Policy & macro: inflation (CPI/PCE), payrolls/unemployment, growth (GDP/ISM/PMI), fiscal changes.\n\
-   - Central banks and rates: FOMC minutes/speeches, 2y/10y yields, term premium discussion if relevant.\n\
-   - Earnings cycle: guidance surprises (beats/cuts), margin commentary in key sectors.\n\
-   - Geopolitics: war/sanctions/shipping chokepoints/energy supply risks.\n\
-   - Commodities & volatility: oil/natgas/copper, VIX, and any sharp moves that change risk appetite.\n\
-   Prefer reputable sources (Reuters, Bloomberg, WSJ/FT) and primary (Fed/BLS/SEC).\n\
-   Favor recency within the last {recency} day(s). Limit yourself to ~{max_pages} pages.\n\
-2) Synthesize a world-state + investable theses and propose BUY/HOLD/SELL actions on S&P 500 stocks\n   and major ETFs (SPY, sectors, factors, commodities) that best express the theses.\n\
-   - Respect the baseline invested band (60–70%) absent strong evidence; propose 'investment_ratio_target'.\n\
-   - Avoid whipsaws: unless a thesis changed materially, do not reverse positions held < {min_hold} days.\n\
-   - For EACH proposed trade, include a brief rationale (1–3 sentences) with 1–3 source URLs.\n\
-   - Favor ideas with multi-month durability and defensible catalysts.\n\
-   - Output must be VALID JSON matching the provided schema.\n"""
+You are Deltatrade’s Chief VALUE Investor. Your horizon is ~12 months. Your goal is to beat the S&P 500 with\nthoughtful capital allocation, low churn, and company-level fundamentals. Behave like an expert PM running a\nconcentrated book with a baseline invested band of 60–70% unless evidence is strong.\n\nDO IN ONE CALL:\n1) Use the web_search tool to gather *today’s* world state:\n   - Macro: inflation (CPI/PCE), jobs (NFP/unemployment), growth (GDP/ISM/PMI), fiscal impulses.\n   - Central banks: FOMC/ECB/BOJ communication; 2y/10y yields; balance of risks.\n   - Geopolitics/energy/shipping disruptions that change earnings or multiples.\n   - Company fundamentals: revenue trajectory, margins, unit economics, capital intensity, balance sheet,\n     guidance revisions, structural tailwinds/headwinds; prefer SEC filings, earnings call summaries,\n     and tier-1 outlets (Reuters/Bloomberg/WSJ/FT). Favor recency within {recency} day(s). Cap to ~{max_pages} pages.\n\n2) Synthesize 3–7 durable theses for the next 12 months and propose BUY/HOLD/SELL actions across S&P 500\n   and liquid ETFs (SPY/sectors/factors/commodities) that express those theses. For EACH action:\n   - Give a *plain-English* rationale focused on the next 12 months.\n   - Include valuation color (e.g., forward P/E, EV/EBITDA, FCF yield), expected revenue/CAGR or margin direction,\n     key catalysts and risks. Use the 'valuation' object when possible.\n   - If the position is currently held and < {min_hold} days, prefer HOLD unless the thesis *changed materially*;\n     then justify the change explicitly (“thesis changed because …”).\n   - Provide 1–3 source URLs used.\n\n3) Return VALID JSON per schema. No extra prose outside JSON.\n"""
 
 USER_PROMPT_TMPL = """\
-Portfolio snapshot (for continuity):\n- Cash %: {cash_pct:.1f}\n- Current positions: {positions_line}\n\nPrior rationales (most recent per symbol):\n{memory_lines}\n\nConstraints & preferences:\n- Universe: S&P 500 + liquid ETFs (SPY, sector ETFs, factor ETFs, liquid commodity ETFs).\n- Max actions per run: {max_actions}\n- Domain allowlist (prefer if available): {allowlist}\n- If evidence is weak, return HOLD/NO_CHANGE.\n\nPlease produce strict JSON only, conforming to the schema, with citations.\n"""
+You are advising a value-investor PM with a 12-month horizon.\nPortfolio snapshot:\n- Cash %: {cash_pct:.1f}\n- Current positions: {positions_line}\n\nLatest rationales (continuity):\n{memory_lines}\n\nConstraints:\n- Universe: S&P 500 + liquid ETFs (SPY/sectors/factors/commodities).\n- Max actions per run: {max_actions}\n- Prefer these domains: {allowlist}\n- If evidence is insufficient for a trade, choose HOLD/NO_CHANGE with a clear reason.\n\nReturn STRICT JSON per schema with citations.\n"""
+
 
 
 def _build_user_prompt(portfolio: Dict[str, Any], memory_map: Dict[str, Dict[str, Any]], cfg) -> str:
@@ -153,7 +154,7 @@ def run_advisor(tc=None, cfg=None) -> Dict[str, Any]:
     recency = int(getattr(cfg, "WEB_ADVISOR_RECENCY_DAYS", 7))
     max_pages = int(getattr(cfg, "WEB_ADVISOR_MAX_PAGES", 12))
     model = str(getattr(cfg, "WEB_ADVISOR_MODEL", "gpt-5"))
-    min_hold = int(getattr(cfg, "MIN_HOLD_DAYS_BEFORE_SELL", 30))
+    min_hold = int(getattr(cfg, "MIN_HOLD_DAYS_BEFORE_SELL", 90))
 
     from .config import EPISODES_MEMORY_LOOKBACK, EPISODES_PATH
 
@@ -189,7 +190,8 @@ def run_advisor(tc=None, cfg=None) -> Dict[str, Any]:
             "citations": [],
             "notes": "fallback",
         }
-    return {"ok": True, "report": data, "memory_used": bool(memory)}
+    raw = payload[:50000] if isinstance(payload, str) else ""
+    return {"ok": True, "report": data, "memory_used": bool(memory), "raw": raw}
 
 
 def attach_advisor_to_episode(ep: Dict[str, Any], tc=None, cfg=None) -> Dict[str, Any]:
@@ -210,6 +212,8 @@ def attach_advisor_to_episode(ep: Dict[str, Any], tc=None, cfg=None) -> Dict[str
     else:
         report = {"ok": False, "error": result.get("error"), "disabled": result.get("disabled")}
     episode["advisor_report"] = report
+    if isinstance(result, dict) and result.get("raw"):
+        episode["advisor_raw_json"] = result["raw"]
 
     summary = ""
     if isinstance(report, dict):

@@ -130,6 +130,62 @@
       </div>
 
       <div class="card card-surface p-4 mb-4">
+        <h5 class="fw-semibold mb-3">Value-investor advisor</h5>
+        <p class="text-muted small mb-3">Control the web-search AI that crafts 12-month, low-churn theses with valuation color.</p>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="ENABLE_WEB_ADVISOR" name="ENABLE_WEB_ADVISOR" {% if cfg.ENABLE_WEB_ADVISOR %}checked{% endif %}>
+              <label class="form-check-label" for="ENABLE_WEB_ADVISOR">Enable advisor</label>
+            </div>
+            <div class="setting-hint">Turn on the value-investor web advisor with memory.</div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="text" class="form-control" id="WEB_ADVISOR_MODEL" name="WEB_ADVISOR_MODEL" value="{{ cfg.WEB_ADVISOR_MODEL }}">
+              <label for="WEB_ADVISOR_MODEL">Model</label>
+            </div>
+            <div class="form-text setting-hint">Defaults to gpt-5. Override to target a different model.</div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" min="1" class="form-control" id="WEB_ADVISOR_RECENCY_DAYS" name="WEB_ADVISOR_RECENCY_DAYS" value="{{ cfg.WEB_ADVISOR_RECENCY_DAYS }}">
+              <label for="WEB_ADVISOR_RECENCY_DAYS">Recency window (days)</label>
+            </div>
+            <div class="form-text setting-hint">Favor news within this many days of the run.</div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" min="1" class="form-control" id="WEB_ADVISOR_MAX_PAGES" name="WEB_ADVISOR_MAX_PAGES" value="{{ cfg.WEB_ADVISOR_MAX_PAGES }}">
+              <label for="WEB_ADVISOR_MAX_PAGES">Max web pages</label>
+            </div>
+            <div class="form-text setting-hint">Cap the number of web pages fetched per run.</div>
+          </div>
+          <div class="col-md-8">
+            <div class="form-floating">
+              <input type="text" class="form-control" id="WEB_ADVISOR_DOMAIN_ALLOWLIST" name="WEB_ADVISOR_DOMAIN_ALLOWLIST" value="{{ cfg.WEB_ADVISOR_DOMAIN_ALLOWLIST|join(', ') }}">
+              <label for="WEB_ADVISOR_DOMAIN_ALLOWLIST">Preferred domains</label>
+            </div>
+            <div class="form-text setting-hint">Comma-separated list (e.g., Reuters, Bloomberg, SEC filings).</div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" min="1" class="form-control" id="ADVISOR_MAX_TRADES_PER_RUN" name="ADVISOR_MAX_TRADES_PER_RUN" value="{{ cfg.ADVISOR_MAX_TRADES_PER_RUN }}">
+              <label for="ADVISOR_MAX_TRADES_PER_RUN">Max actions per run</label>
+            </div>
+            <div class="form-text setting-hint">Limit how many BUY/HOLD/SELL decisions the advisor proposes.</div>
+          </div>
+          <div class="col-md-4">
+            <div class="form-floating">
+              <input type="number" min="1" class="form-control" id="MIN_HOLD_DAYS_BEFORE_SELL" name="MIN_HOLD_DAYS_BEFORE_SELL" value="{{ cfg.MIN_HOLD_DAYS_BEFORE_SELL }}">
+              <label for="MIN_HOLD_DAYS_BEFORE_SELL">Min hold days before sell</label>
+            </div>
+            <div class="form-text setting-hint">Bias toward low churn by holding positions at least this long unless the thesis changes.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card card-surface p-4 mb-4">
         <h5 class="fw-semibold mb-3">Factor & event inputs</h5>
         <p class="text-muted small mb-3">Fine-tune how signals are built from price patterns and news.</p>
         <div class="row g-3">
