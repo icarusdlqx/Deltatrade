@@ -368,6 +368,7 @@ def _portfolio_snapshot_from_episode(latest: Dict[str, Any] | None) -> Dict[str,
 
 
 def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Use the long value-investor narrative whenever available."""
     if not latest:
         return {
             "summary": "No runs recorded yet.",
@@ -405,23 +406,38 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
     traded = len(actual_orders) > 0
     market_commentary = str(latest.get("market_commentary") or "").strip()
 
+    reason_text = ", ".join(reasons) if reasons else "none"
     if traded:
-        summary = "Traded {count} orders · net {net:.1f} bps after {cost:.1f} bps costs · turnover {turnover:.1f}%".format(
+        summary_fallback = "Traded {count} orders · net {net:.1f} bps after {cost:.1f} bps costs · turnover {turnover:.1f}%".format(
             count=len(actual_orders), net=net, cost=cost, turnover=turnover_pct
         )
-        plain = market_commentary or (
+        plain_fallback = market_commentary or (
             "Placed {count} orders; turnover {turnover:.1f}%; exp {expected:.1f} bps → net {net:.1f} bps.".format(
                 count=len(actual_orders), turnover=turnover_pct, expected=expected, net=net
             )
         )
     else:
-        reason_text = ", ".join(reasons) if reasons else "none"
-        summary = (
+        summary_fallback = (
             "Skipped — reasons: {reasons}; gate math: exp {expected:.1f} bps, cost {cost:.1f} bps, net {net:.1f} bps"
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
-        plain = market_commentary or (
+        plain_fallback = market_commentary or (
             "Skipped — reasons: {reasons}. Gate: exp {expected:.1f}, cost {cost:.1f}, net {net:.1f} bps."
         ).format(reasons=reason_text, expected=expected, cost=cost, net=net)
+
+    narrative = ""
+    for key in ("explanation_long", "ai_market_takeaway", "market_takeaway", "decision_narrative"):
+        val = latest.get(key)
+        if isinstance(val, str) and val.strip():
+            narrative = val.strip()
+            break
+
+    if narrative:
+        summary = narrative
+        as_of = str(latest.get("as_of") or "").strip()
+        plain = f"As of {as_of} — {narrative}" if as_of else narrative
+    else:
+        summary = summary_fallback
+        plain = plain_fallback
 
     advisor_summary = ""
     advisor_snippet = latest.get("advisor_summary_1p")
@@ -429,9 +445,6 @@ def _summarize_last_run(latest: Dict[str, Any] | None) -> Dict[str, Any]:
         advisor_snippet = latest["advisor_report"].get("world_state_summary")
     if advisor_snippet:
         advisor_summary = str(advisor_snippet).strip()
-        if advisor_summary:
-            summary = (summary + " Advisor: " + advisor_summary).strip()
-            plain = (plain + " Advisor: " + advisor_summary).strip()
     return {
         "summary": summary,
         "plain_english": plain,
@@ -958,7 +971,7 @@ def settings():
         if allowlist:
             data["WEB_ADVISOR_DOMAIN_ALLOWLIST"] = allowlist
         data["ADVISOR_MAX_TRADES_PER_RUN"] = int(g("ADVISOR_MAX_TRADES_PER_RUN", "6"))
-        data["MIN_HOLD_DAYS_BEFORE_SELL"] = int(g("MIN_HOLD_DAYS_BEFORE_SELL", "30"))
+        data["MIN_HOLD_DAYS_BEFORE_SELL"] = int(g("MIN_HOLD_DAYS_BEFORE_SELL", "90"))
         data["UNIVERSE_MODE"]        = g("UNIVERSE_MODE", "etfs_only")
         data["UNIVERSE_MAX"]         = int(g("UNIVERSE_MAX", "450"))
         data["DATA_LOOKBACK_DAYS"]   = int(g("DATA_LOOKBACK_DAYS", "260"))

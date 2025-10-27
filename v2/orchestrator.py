@@ -968,5 +968,19 @@ if _ORIG_RUN_ONCE is not None:
                 _logging.getLogger(__name__).warning("Advisor attach failed: %s", _e)
             except Exception:
                 pass
+        try:
+            from .log_explainer import build_human_log
+
+            ep = dict(ep or {})
+            narrative = build_human_log(ep)
+            ep["explanation_long"] = narrative
+            for key in ("ai_market_takeaway", "market_takeaway", "narrative_long", "ai_takeaway"):
+                ep[key] = narrative
+            ep["top_signals"] = []
+        except Exception as _e:
+            try:
+                _logging.getLogger(__name__).warning("Log explainer failed: %s", _e)
+            except Exception:
+                pass
         return ep
 # =============================================================================
