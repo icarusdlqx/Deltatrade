@@ -960,7 +960,7 @@ def settings():
         data["ENABLE_EVENT_SCORE"]   = g("ENABLE_EVENT_SCORE")   == "on"
         data["ENABLE_COST_GATE"]     = g("ENABLE_COST_GATE")     == "on"
         data["ENABLE_VOL_TARGETING"] = g("ENABLE_VOL_TARGETING") == "on"
-        data["TRADING_WINDOWS_ET"]   = g("TRADING_WINDOWS_ET", "10:05,14:35,16:35")
+        data["TRADING_WINDOWS_ET"]   = g("TRADING_WINDOWS_ET", "10:05,14:35,15:45")
         data["WINDOW_TOL_MIN"]       = int(g("WINDOW_TOL_MIN", "30"))
         data["AVOID_NEAR_CLOSE_MIN"] = int(g("AVOID_NEAR_CLOSE_MIN", "10"))
         data["ENABLE_WEB_ADVISOR"]   = g("ENABLE_WEB_ADVISOR") == "on"
