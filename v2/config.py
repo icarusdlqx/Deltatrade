@@ -6,7 +6,7 @@ import os
 
 # Automation & windows
 AUTOMATION_ENABLED = True
-TRADING_WINDOWS_ET = ["10:05", "14:35", "16:35"]
+TRADING_WINDOWS_ET = ["10:05", "14:35", "15:45"]
 WINDOW_TOL_MIN = 2  # Small tolerance to trigger only at exact time
 AVOID_NEAR_CLOSE_MIN = 10
 # Ensure we run only once in each window per trading day

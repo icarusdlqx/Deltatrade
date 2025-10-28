@@ -22,7 +22,7 @@
             <input class="form-check-input" type="checkbox" id="RUN_ONCE_PER_WINDOW" name="RUN_ONCE_PER_WINDOW" {% if cfg.RUN_ONCE_PER_WINDOW %}checked{% endif %}>
             <label class="form-check-label" for="RUN_ONCE_PER_WINDOW">Run once per window</label>
           </div>
-          <div class="setting-hint">Ensure each trading window (10:05, 14:35, 16:35) runs exactly once per day, never multiple times.</div>
+          <div class="setting-hint">Ensure each trading window (10:05, 14:35, 15:45) runs exactly once per day, never multiple times.</div>
         </div>
         <div class="mb-3">
           <div class="form-check form-switch">
@@ -65,7 +65,7 @@
               <input type="text" class="form-control" id="TRADING_WINDOWS_ET" name="TRADING_WINDOWS_ET" value="{{ cfg.TRADING_WINDOWS_ET|join(', ') }}">
               <label for="TRADING_WINDOWS_ET">Trading windows (ET)</label>
             </div>
-            <div class="form-text setting-hint">Exact times in Eastern Time when analysis runs (default: 10:05, 14:35, 16:35). The system runs once at each time.</div>
+            <div class="form-text setting-hint">Exact times in Eastern Time when analysis runs (default: 10:05, 14:35, 15:45). The system runs once at each time.</div>
           </div>
           <div class="col-md-3">
             <div class="form-floating">
