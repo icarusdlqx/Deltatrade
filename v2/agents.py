@@ -26,14 +26,50 @@ def _client():
     return OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def _extract_text(resp) -> str:
-    # Try Responses API
+    # Prefer modern Responses API helpers
+    text = getattr(resp, "output_text", None)
+    if isinstance(text, str) and text.strip():
+        return text
+
+    output = getattr(resp, "output", None)
+    if output:
+        chunks: List[str] = []
+        for item in output:  # type: ignore[assignment]
+            content = getattr(item, "content", None) or []
+            for part in content:
+                parsed = getattr(part, "parsed", None)
+                if parsed is not None:
+                    try:
+                        return json.dumps(parsed)
+                    except Exception:
+                        pass
+                json_payload = getattr(part, "json", None)
+                if json_payload is not None:
+                    try:
+                        return json.dumps(json_payload)
+                    except Exception:
+                        pass
+                schema_payload = getattr(part, "json_schema", None)
+                if isinstance(schema_payload, dict):
+                    parsed_payload = schema_payload.get("parsed")
+                    if parsed_payload is not None:
+                        try:
+                            return json.dumps(parsed_payload)
+                        except Exception:
+                            pass
+                    content_text = schema_payload.get("text")
+                    if isinstance(content_text, str) and content_text.strip():
+                        chunks.append(content_text)
+                        continue
+                part_text = getattr(part, "text", None)
+                if isinstance(part_text, str) and part_text.strip():
+                    chunks.append(part_text)
+        if chunks:
+            return "".join(chunks)
+
+    # Fallback to Chat Completions style payloads
     try:
-        return resp.output[0].content[0].text
-    except Exception:
-        pass
-    # Try chat completions
-    try:
-        return resp.choices[0].message["content"]
+        return resp["choices"][0]["message"]["content"]  # type: ignore[index]
     except Exception:
         return "{}"
 
@@ -119,20 +155,21 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
 
     out: Dict[str, float] = {}
     schema = {
-      "name": "EventScore",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "symbol": {"type": "string"},
-          "direction": {"type": "integer"},
-          "magnitude": {"type": "string", "enum": ["low","med","high"]},
-          "confidence": {"type": "number"},
-          "half_life_days": {"type": "integer"},
-          "rationale": {"type": "array", "items": {"type":"string"}},
-          "risks": {"type": "array", "items": {"type":"string"}}
+        "name": "EventScore",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "direction": {"type": "integer"},
+                "magnitude": {"type": "string", "enum": ["low", "med", "high"]},
+                "confidence": {"type": "number"},
+                "half_life_days": {"type": "integer"},
+                "rationale": {"type": "array", "items": {"type": "string"}},
+                "risks": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["symbol", "direction", "magnitude", "confidence", "half_life_days"],
         },
-        "required": ["symbol","direction","magnitude","confidence","half_life_days"]
-      }
     }
     total_tokens = 0
     for sym, items in news_by_symbol.items():
@@ -147,10 +184,16 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
                 model=model_name,
                 reasoning={"effort": effort},
                 input=[
-                    {"role":"system","content":"You are an equity event analyst. Return a calibrated, directionally correct score for near-term stock impact."},
-                    {"role":"user","content": f"Symbol: {sym}\nConsider the news items (most recent first):\n{text}\nReturn EventScore JSON."}
+                    {
+                        "role": "system",
+                        "content": "You are an equity event analyst. Return a calibrated, directionally correct score for near-term stock impact.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Symbol: {sym}\nConsider the news items (most recent first):\n{text}\nReturn EventScore JSON.",
+                    },
                 ],
-                response_format={"type":"json_schema","json_schema":schema}
+                response_format={"type": "json_schema", "json_schema": schema},
             )
             raw = _extract_text(resp)
             js = json.loads(raw)
@@ -171,9 +214,14 @@ def score_events_for_symbols(news_by_symbol: Dict[str, List[dict]],
             )
             usage = getattr(resp, "usage", None)
             if usage is not None:
-                tokens = getattr(usage, "total_tokens", None)
-                if tokens is not None:
-                    total_tokens += int(tokens)
+                token_fields = [
+                    getattr(usage, "total_tokens", None),
+                    getattr(usage, "output_tokens", None),
+                ]
+                for value in token_fields:
+                    if value is not None:
+                        total_tokens += int(value)
+                        break
             meta["called"] = True
             log.info("event_score_detail %s", details[sym]["summary"])
         except Exception as exc:
