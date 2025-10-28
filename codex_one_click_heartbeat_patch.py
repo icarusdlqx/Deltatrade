@@ -364,7 +364,7 @@ def main():
 
     print("\nDone.\nNext steps:")
     print("1) Run: python scripts/heartbeat_smoke.py   # quick sanity; expect 'OK' lines and heartbeats")
-    print("2) Before each 10:05 / 14:35 / 16:35 ET cycle, your bot will now fail-closed if APIs look bad.")
+    print("2) Before each 10:05 / 14:35 / 15:45 ET cycle, your bot will now fail-closed if APIs look bad.")
     print("3) Tail the log: tail -n 50 logs/heartbeat.ndjson")
 
 

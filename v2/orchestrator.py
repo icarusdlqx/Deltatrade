@@ -11,8 +11,10 @@ except SystemExit:
 except Exception as _e:
     print("[orchestrator] Event assessment guard error:", _e)
 # --- END guard ---
+import json
 import os, time, logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import pytz
 from typing import Any, Dict, List, Tuple
 import numpy as np
@@ -38,11 +40,17 @@ from .utils import write_jsonl, read_json, write_json
 from .features import compute_panel, bars_from_multiindex
 from .news import fetch_news_map
 from .agents import score_events_for_symbols, risk_officer_check
-from .optimizer import solve_weights, scale_to_target_vol
+from .optimizer import optimize_weights
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
 from .universe import build_universe, load_top50_etfs
 from .long_term_investor import build_long_term_outlook
 from .datafeed import get_daily_bars
+from .consolidated import (
+    build_alpha_vector,
+    combine_factors_as_bps,
+    load_blender,
+    save_blender,
+)
 
 logger = logging.getLogger(__name__)
 log = logger
@@ -159,6 +167,53 @@ def _compose_market_commentary(
 
     return " ".join(pieces)
 
+
+def _load_blender_history(max_points: int = 120) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    path = Path(C.EPISODES_PATH)
+    if not path.exists():
+        return np.array([]), np.array([]), np.array([])
+
+    cs_hist: List[float] = []
+    news_hist: List[float] = []
+    realized_hist: List[float] = []
+
+    try:
+        lines = path.read_text().splitlines()[-max_points:]
+    except Exception:
+        return np.array([]), np.array([]), np.array([])
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        sleeve = (obj.get("alpha_breakdown") or {}).get("sleeve_totals_bps") or {}
+        cs = sleeve.get("factor")
+        news = sleeve.get("event")
+        metrics = obj.get("metrics") or {}
+        realized = (
+            metrics.get("pnl_total_bps")
+            or metrics.get("realized_pnl_bps")
+            or obj.get("realized_pnl_bps")
+        )
+        if cs is None or news is None or realized is None:
+            continue
+        cs_hist.append(float(cs) / 10000.0)
+        news_hist.append(float(news) / 10000.0)
+        realized_hist.append(float(realized) / 10000.0)
+
+    if not realized_hist:
+        return np.array([]), np.array([]), np.array([])
+
+    return (
+        np.array(cs_hist[-max_points:], dtype=float),
+        np.array(news_hist[-max_points:], dtype=float),
+        np.array(realized_hist[-max_points:], dtype=float),
+    )
+
 def _alpaca_clients():
     api_key = os.environ.get("ALPACA_API_KEY")
     api_sec = os.environ.get("ALPACA_SECRET_KEY")
@@ -258,6 +313,14 @@ def run_once() -> dict:
     diag: Dict[str, Any] = {"stage": {}}
     diag["stage"]["universe_count"] = len(symbols)
 
+    blender = load_blender()
+    cs_hist, news_hist, realized_hist = _load_blender_history()
+    try:
+        blender.update_with_realized(cs_hist, news_hist, realized_hist)
+    except Exception as _blend_err:
+        log.warning("blender_update_failed", exc_info=_blend_err)
+    settings_dict = get_settings() or {}
+
     lookback_days = int(max(int(cfg.DATA_LOOKBACK_DAYS), 252))
     diag["stage"]["lookback_days"] = lookback_days
     diag["stage"]["fallback_used"] = False
@@ -297,6 +360,7 @@ def run_once() -> dict:
                           winsor_pct=cfg.WINSOR_PCT).dropna(subset=["last_price"]).sort_values("score_z", ascending=False)
     valid_df = panel
     diag["stage"]["valid_features"] = int(len(valid_df))
+    adv = _estimate_adv(bars)
 
     # Event-driven alpha
     openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -337,13 +401,51 @@ def run_once() -> dict:
         "details": llm_meta.get("details") or {},
     }
 
-    # Factor + event blend
-    factor_alpha_bps = 8.0 * panel["score_z"].fillna(0)
-    sw = cfg.SLEEVE_WEIGHTS
-    factor_component = sw.get("xsec", 0) * factor_alpha_bps
-    event_component = sw.get("event", 0) * pd.Series(event_alpha_bps, dtype=float)
-    alpha_bps = factor_component.add(event_component, fill_value=0.0).fillna(0)
+    # Factor + event blend via online ridge weights
+    factor_inputs = {"combo": panel["score_z"].fillna(0.0).to_numpy()}
+    alpha_cs_array = combine_factors_as_bps(factor_inputs)
+    alpha_cs_series = pd.Series(alpha_cs_array, index=panel.index, dtype=float)
+
+    details_map = (llm_meta.get("details") or {}) if isinstance(llm_meta, dict) else {}
+    mag_map = {"low": 1.0, "med": 2.0, "high": 3.0}
+    news_items_per_name: List[List[Dict[str, object]]] = []
+    for sym in panel.index:
+        detail = (details_map.get(sym) or {}) if isinstance(details_map, dict) else {}
+        items: List[Dict[str, object]] = []
+        if detail:
+            direction = float(detail.get("direction", 0) or 0.0)
+            magnitude = mag_map.get(str(detail.get("magnitude", "low")).lower(), 1.0)
+            direction_score = direction * magnitude
+            items.append(
+                {
+                    "direction_score": direction_score,
+                    "bucket": detail.get("bucket") or "default",
+                    "confidence": float(detail.get("confidence", 0.0) or 0.0),
+                    "half_life_days": detail.get("half_life_days"),
+                    "age_days": 0.0,
+                    "event_id": detail.get("event_id") or detail.get("id"),
+                }
+            )
+        news_items_per_name.append(items)
+
+    alpha_news_array, alpha_final_array = build_alpha_vector(
+        alpha_cs_series.to_numpy(),
+        news_items_per_name,
+        blender,
+    )
+    alpha_news_series = pd.Series(alpha_news_array, index=panel.index, dtype=float)
+    alpha_final_series = pd.Series(alpha_final_array, index=panel.index, dtype=float)
+
+    event_alpha_bps = {sym: alpha_news_series.get(sym, 0.0) for sym in panel.index}
+    factor_component = alpha_cs_series
+    event_component = alpha_news_series
+    alpha_bps = alpha_final_series
     alpha = alpha_bps / 10000.0  # daily return proxy
+
+    diag["blender"] = {
+        "weights": {"factor": float(blender.theta[0]), "news": float(blender.theta[1])},
+        "history_points": int(len(cs_hist)),
+    }
 
     # Covariance
     rets = {s: df["close"].pct_change().dropna() for s, df in bars.items()}
@@ -392,9 +494,11 @@ def run_once() -> dict:
             "event": float(event_series.sum()),
             "total": float(alpha_series.sum()),
         },
+        "blender_weights": {
+            "factor": float(blender.theta[0]),
+            "event": float(blender.theta[1]),
+        },
     }
-    alpha_vec = alpha.reindex(candidates).fillna(0).values
-
     long_term_symbols = ranked_symbols[: max(int(cfg.TARGET_POSITIONS), 1)]
     try:
         long_term_report = build_long_term_outlook(
@@ -408,8 +512,8 @@ def run_once() -> dict:
     diag["long_term_analysis"] = long_term_report
 
     cur_mv_map, equity_prev, last_prices_live = _current_positions(trade_client)
-    invested_prev = sum(abs(v) for v in cur_mv_map.values()) or 1.0
-    w_prev = np.array([cur_mv_map.get(s, 0.0) for s in candidates], dtype=float) / invested_prev
+    equity_base = max(1.0, float(equity_prev))
+    w_prev = np.array([cur_mv_map.get(s, 0.0) for s in candidates], dtype=float) / equity_base
     has_positions = any(abs(v) > 1e-6 for v in cur_mv_map.values())
 
     # Sector caps (optional via CSV)
@@ -423,15 +527,51 @@ def run_once() -> dict:
     rev_sec = {v:k for k,v in sec_vocab.items()}
 
     # Optimize
-    Sig_sub = Sigma[:len(candidates), :len(candidates)]
-    w_opt = solve_weights(alpha_vec, Sig_sub, w_prev, float(cfg.NAME_MAX), sector_ids, float(cfg.SECTOR_MAX),
-                          float(cfg.LAMBDA_RISK), float(cfg.TURNOVER_PENALTY))
-
-    # Vol targeting
-    if cfg.ENABLE_VOL_TARGETING:
-        w_scaled = scale_to_target_vol(w_opt, Sig_sub, float(cfg.TARGET_PORTFOLIO_VOL)/np.sqrt(252.0))
+    if len(candidates) > 0 and len(df_ret.columns) > 0:
+        cov_cols = list(df_ret.columns)
+        idx_map = {sym: i for i, sym in enumerate(cov_cols)}
+        cov = df_ret.cov().values
+        sel = [idx_map[s] for s in candidates]
+        Sig_sub = cov[np.ix_(sel, sel)]
     else:
-        w_scaled = w_opt
+        Sig_sub = np.zeros((len(candidates), len(candidates)))
+    if Sig_sub.size:
+        Sig_sub = Sig_sub + np.eye(len(candidates)) * 1e-8
+
+    sector_names = [rev_sec[i] for i in range(len(rev_sec))] if rev_sec else []
+    if sector_names:
+        sector_expo = np.zeros((len(sector_names), len(candidates)))
+        for idx, sec_id in enumerate(sector_ids):
+            sector_expo[sec_id, idx] = 1.0
+    else:
+        sector_expo = None
+
+    etf_set = set(load_top50_etfs())
+    etf_mask = np.array([s in etf_set for s in candidates], dtype=bool)
+
+    prices_array = panel["last_price"].reindex(candidates).fillna(0.0).to_numpy()
+    adv_array = np.array([adv.get(s, 1.0) for s in candidates], dtype=float)
+    spread_val = float(settings_dict.get("COST_SPREAD_BPS", C.COST_SPREAD_BPS))
+    spread_array = np.full(len(candidates), spread_val, dtype=float)
+    kappa_val = float(settings_dict.get("COST_IMPACT_KAPPA", C.COST_IMPACT_KAPPA))
+    kappa_array = np.full(len(candidates), kappa_val, dtype=float)
+    psi_val = float(settings_dict.get("COST_IMPACT_PSI", C.COST_IMPACT_PSI))
+
+    w_scaled = optimize_weights(
+        alpha_series.values,
+        Sig_sub,
+        w_prev,
+        prices_array,
+        adv_array,
+        spread_array,
+        kappa_array,
+        psi_val,
+        candidates,
+        sector_expo=sector_expo,
+        sector_names=sector_names if sector_names else None,
+        etf_mask=etf_mask,
+        equity=equity_base,
+    ) if len(candidates) else np.array([])
 
     fallback_used = False
     nonzero_sum = float(np.sum(np.abs(w_scaled))) if len(w_scaled) else 0.0
@@ -445,7 +585,10 @@ def run_once() -> dict:
                 w_fb[idx] = min(ew, max_weight)
             target_vol_annual = float(cfg.TARGET_PORTFOLIO_VOL)
             if target_vol_annual > 0 and Sig_sub.size > 0:
-                w_fb = scale_to_target_vol(w_fb, Sig_sub, target_vol_annual / np.sqrt(252.0))
+                target_daily = target_vol_annual / np.sqrt(252.0)
+                cur_vol = float(np.sqrt(w_fb @ Sig_sub @ w_fb)) if Sig_sub.size else 0.0
+                if cur_vol > 1e-8:
+                    w_fb *= min(1.0, target_daily / cur_vol)
             w_fb = np.clip(w_fb, 0.0, max_weight)
             total_w = w_fb.sum()
             if total_w > 1.0:
@@ -459,7 +602,6 @@ def run_once() -> dict:
 
     target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
 
-    settings_dict = get_settings()
     target_slots = int(settings_dict.get("TARGET_POSITIONS", TARGET_POSITIONS))
     target_slots = max(1, min(10, target_slots))
     diag_stage["target_positions"] = target_slots
@@ -552,7 +694,6 @@ def run_once() -> dict:
 
     # Cost-aware gate
     prices = {s: float(bars[s]["close"].iloc[-1]) for s in candidates if s in bars}
-    adv = _estimate_adv(bars)
     expected_alpha_bps = float(np.dot(alpha.reindex(candidates).fillna(0).values, w_final)) * 10000.0
     cost_breakdown = {}
     rebalance_deltas: Dict[str, Dict[str, float]] = {}
@@ -874,6 +1015,11 @@ def run_once() -> dict:
         changes_summary,
         risk_officer_verdict.get("message") or roc.get("approved"),
     )
+
+    try:
+        save_blender(blender)
+    except Exception as _blend_save_err:
+        log.warning("blender_save_failed", exc_info=_blend_save_err)
 
     ep = {
         "as_of": datetime.now(pytz.timezone("US/Eastern")).isoformat(),
