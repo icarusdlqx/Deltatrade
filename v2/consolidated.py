@@ -317,7 +317,11 @@ def optimize_weights(
     etf_mask: Optional[np.ndarray] = None,
     equity: float = 1.0,
 ) -> np.ndarray:
-    if cp is None:
+    # When the impact exponent drops below 1 the resulting penalty becomes
+    # concave, which violates CVXPY's DCP rules.  In that case (or when CVXPY is
+    # unavailable) fall back to the SLSQP implementation that already handles
+    # the non-convex objective.
+    if cp is None or psi < 1.0:
         return _optimize_weights_fallback(
             alpha_bps,
             Sigma_daily,
