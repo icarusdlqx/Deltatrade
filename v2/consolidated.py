@@ -317,11 +317,11 @@ def optimize_weights(
     etf_mask: Optional[np.ndarray] = None,
     equity: float = 1.0,
 ) -> np.ndarray:
-    # When the impact exponent drops below 1 the resulting penalty becomes
-    # concave, which violates CVXPY's DCP rules.  In that case (or when CVXPY is
-    # unavailable) fall back to the SLSQP implementation that already handles
-    # the non-convex objective.
-    if cp is None or psi < 1.0:
+    # When the impact exponent is not quadratic we fall back to the SLSQP
+    # implementation which already handles the non-convex objective.  The
+    # CVXPY implementation below assumes ψ=2 so that the transaction costs are
+    # purely quadratic and compatible with OSQP.
+    if cp is None or psi < 1.0 or not np.isclose(psi, 2.0):
         return _optimize_weights_fallback(
             alpha_bps,
             Sigma_daily,
@@ -350,11 +350,12 @@ def optimize_weights(
     to_term = cp.norm1(delta_w)
 
     if OPT.include_txn_costs_in_objective:
-        spread_term_bps = spread_bps @ cp.abs(delta_w)
+        spread_term_bps = cp.sum(cp.multiply(spread_bps, cp.abs(delta_w)))
         adv_safe = np.maximum(adv_dollars, 1.0)
-        dollar_change = equity * cp.abs(delta_w)
-        impact_piece = kappa @ cp.power(dollar_change / adv_safe, psi)
-        txn_bps = spread_term_bps + 10000.0 * impact_piece
+        scale_sq = np.square(equity / adv_safe)
+        impact_weights = kappa * scale_sq
+        impact_bps = 10000.0 * cp.sum(cp.multiply(impact_weights, cp.square(delta_w)))
+        txn_bps = spread_term_bps + impact_bps
     else:
         txn_bps = 0.0
 
