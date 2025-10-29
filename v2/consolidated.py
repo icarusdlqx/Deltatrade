@@ -10,10 +10,11 @@ blending, optimizer, execution helpers) that higher layers can adopt.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import datetime as dt
 import json
+import re
 
 try:  # pragma: no cover - optional dependency for environments without cvxpy
     import cvxpy as cp
@@ -119,6 +120,195 @@ class NewsParams:
 
 FACTOR = FactorParams()
 NEWS = NewsParams()
+
+
+def parse_confidence(d: Dict[str, Any], default: float = 0.0) -> float:
+    """Coerce confidence-like fields to the [0, 1] interval."""
+
+    for key in ("confidence", "confidence_score", "probability", "confidence_pct"):
+        if key not in d or d[key] is None:
+            continue
+        value = d[key]
+        if isinstance(value, str):
+            txt = value.strip()
+            if not txt:
+                continue
+            if txt.endswith("%"):
+                try:
+                    pct = float(txt[:-1]) / 100.0
+                    return float(max(0.0, min(1.0, pct)))
+                except Exception:
+                    continue
+            try:
+                value = float(txt)
+            except Exception:
+                continue
+        try:
+            num = float(value)
+            if num > 1.0:
+                num = num / 100.0
+            return float(max(0.0, min(1.0, num)))
+        except Exception:
+            continue
+    return float(default)
+
+
+def parse_direction_score(d: Dict[str, Any], default: float = 0.0) -> float:
+    """Derive a direction score from structured LLM fields."""
+
+    raw = d.get("direction_score")
+    if raw is not None:
+        try:
+            return float(raw)
+        except Exception:
+            pass
+
+    magnitude_tokens = {
+        "low": 1.0,
+        "lo": 1.0,
+        "medium": 2.0,
+        "med": 2.0,
+        "moderate": 2.0,
+        "mid": 2.0,
+        "high": 3.0,
+        "hi": 3.0,
+        "strong": 3.0,
+    }
+    direction_tokens_pos = {"bullish", "+", "up", "positive", "long", "buy"}
+    direction_tokens_neg = {"bearish", "-", "down", "negative", "short", "sell"}
+
+    direction_raw = d.get("direction")
+    magnitude_raw = d.get("magnitude")
+
+    # Numeric direction fields should be honoured directly.
+    try:
+        if direction_raw is not None and str(direction_raw).strip() != "":
+            direction_val = float(direction_raw)
+            if magnitude_raw is None:
+                return float(direction_val)
+            mag_val = magnitude_tokens.get(str(magnitude_raw).strip().lower(), 1.0)
+            return float(direction_val * mag_val)
+    except Exception:
+        pass
+
+    direction = str(direction_raw or "").strip().lower()
+    magnitude = str(magnitude_raw or "").strip().lower()
+    mag = magnitude_tokens.get(magnitude, 0.0)
+    if direction in direction_tokens_pos:
+        return float(mag or 0.0)
+    if direction in direction_tokens_neg:
+        return float(-(mag or 0.0))
+    return float(default)
+
+
+def to_age_days(published_at: dt.datetime, now_utc: dt.datetime) -> float:
+    """Return elapsed time in days between two timestamps."""
+
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=dt.timezone.utc)
+    else:
+        published_at = published_at.astimezone(dt.timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=dt.timezone.utc)
+    else:
+        now_utc = now_utc.astimezone(dt.timezone.utc)
+    return float(max(0.0, (now_utc - published_at).total_seconds() / 86400.0))
+
+
+_DATETIME_PATTERNS = (
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%d %H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+)
+
+
+def _coerce_datetime(value: Any) -> Optional[dt.datetime]:
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(dt.timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return dt.datetime.fromtimestamp(float(value), tz=dt.timezone.utc)
+        except Exception:
+            return None
+    if isinstance(value, str):
+        txt = value.strip()
+        if not txt:
+            return None
+        if txt.isdigit():
+            try:
+                return dt.datetime.fromtimestamp(float(txt), tz=dt.timezone.utc)
+            except Exception:
+                pass
+        txt = txt.replace("Z", "+00:00")
+        for pattern in _DATETIME_PATTERNS:
+            try:
+                dt_obj = dt.datetime.strptime(txt, pattern)
+                if dt_obj.tzinfo is None:
+                    dt_obj = dt_obj.replace(tzinfo=dt.timezone.utc)
+                else:
+                    dt_obj = dt_obj.astimezone(dt.timezone.utc)
+                return dt_obj
+            except Exception:
+                continue
+    return None
+
+
+def _parse_half_life_days(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        txt = value.strip().lower()
+        if not txt:
+            return None
+        txt = txt.replace("days", "").replace("day", "").replace("d", "")
+        match = re.search(r"-?\d+(?:\.\d+)?", txt)
+        if match:
+            try:
+                return float(match.group(0))
+            except Exception:
+                return None
+        try:
+            return float(txt)
+        except Exception:
+            return None
+    return None
+
+
+def _parse_age_days(item: Dict[str, Any], default: float = 0.0) -> float:
+    direct = item.get("age_days")
+    if direct is not None:
+        try:
+            return float(direct)
+        except Exception:
+            if isinstance(direct, str):
+                match = re.search(r"-?\d+(?:\.\d+)?", direct)
+                if match:
+                    try:
+                        return float(match.group(0))
+                    except Exception:
+                        pass
+
+    published_raw = (
+        item.get("published_at")
+        or item.get("published")
+        or item.get("timestamp")
+        or item.get("ts_iso")
+    )
+    published_at = _coerce_datetime(published_raw)
+    if published_at is None:
+        return float(default)
+
+    now_raw = item.get("now_utc") or item.get("as_of") or item.get("now")
+    now_dt = _coerce_datetime(now_raw) or dt.datetime.now(dt.timezone.utc)
+    return float(to_age_days(published_at, now_dt))
 
 
 def news_alpha(
@@ -521,12 +711,17 @@ def build_alpha_vector(
                 if eid in seen:
                     continue
                 seen.add(eid)
+            direction_score = parse_direction_score(item, default=0.0)
+            bucket = str(item.get("bucket") or "default")
+            confidence = parse_confidence(item, default=0.0)
+            half_life = _parse_half_life_days(item.get("half_life_days"))
+            age_days = _parse_age_days(item, default=0.0)
             total += news_alpha(
-                float(item.get("direction_score", 0.0) or 0.0),
-                str(item.get("bucket", "default")),
-                float(item.get("confidence", 0.0) or 0.0),
-                item.get("half_life_days"),
-                float(item.get("age_days", 0.0) or 0.0),
+                direction_score,
+                bucket,
+                confidence,
+                half_life,
+                age_days,
             )
         alpha_news[i] = float(
             np.clip(total, -NEWS.max_abs_news_bps_per_name, NEWS.max_abs_news_bps_per_name)
