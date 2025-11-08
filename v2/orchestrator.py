@@ -44,6 +44,7 @@ from .optimizer import optimize_weights
 from .execution import build_order_plans, place_orders_with_limits, estimate_cost_bps
 from .universe import build_universe, load_top50_etfs
 from .long_term_investor import build_long_term_outlook
+from .long_term_portfolio import build_long_term_portfolio, blend_with_existing
 from .datafeed import get_daily_bars
 from .consolidated import (
     build_alpha_vector,
@@ -516,6 +517,77 @@ def run_once() -> dict:
     w_prev = np.array([cur_mv_map.get(s, 0.0) for s in candidates], dtype=float) / equity_base
     has_positions = any(abs(v) > 1e-6 for v in cur_mv_map.values())
 
+    target_weights: Dict[str, float] = {}
+    diag_stage = diag.setdefault("stage", {})
+    diag_stage["has_positions"] = bool(has_positions)
+
+    long_term_mode_flag = bool(
+        settings_dict.get("LONG_TERM_INVESTOR_MODE", getattr(cfg, "LONG_TERM_INVESTOR_MODE", False))
+    )
+    diag_stage["long_term_mode"] = long_term_mode_flag
+    if long_term_mode_flag:
+        macro_stance = (
+            (long_term_report or {}).get("macro", {}).get("stance")
+            if isinstance(long_term_report, dict)
+            else "balanced"
+        ) or "balanced"
+        llm_model = str(settings_dict.get("OPENAI_MODEL", getattr(cfg, "OPENAI_MODEL", "gpt-5")))
+        llm_effort = str(
+            settings_dict.get(
+                "OPENAI_REASONING_EFFORT", getattr(cfg, "OPENAI_REASONING_EFFORT", "medium")
+            )
+        )
+        weight_cap = float(
+            settings_dict.get(
+                "LONG_TERM_WEIGHT_CAP",
+                getattr(cfg, "LONG_TERM_WEIGHT_CAP", getattr(cfg, "MAX_WEIGHT_PER_NAME", 0.2)),
+            )
+        )
+        try:
+            plan = build_long_term_portfolio(
+                panel,
+                candidates,
+                event_details=event_details_map,
+                macro_stance=macro_stance,
+                model=llm_model,
+                reasoning_effort=llm_effort,
+                weight_cap=weight_cap,
+            )
+        except Exception as _plan_err:
+            plan = None
+            diag["long_term_portfolio"] = {"error": str(_plan_err)}
+        else:
+            current_weight_map = {
+                str(sym).upper(): float(val) / equity_base
+                for sym, val in cur_mv_map.items()
+                if equity_base > 0
+            }
+            max_step = float(
+                settings_dict.get(
+                    "LONG_TERM_MAX_STEP", getattr(cfg, "LONG_TERM_MAX_STEP", 0.05)
+                )
+            )
+            ignore_band = float(
+                settings_dict.get(
+                    "LONG_TERM_IGNORE_BAND", getattr(cfg, "LONG_TERM_IGNORE_BAND", 0.03)
+                )
+            )
+            blended = blend_with_existing(
+                plan.weights if plan else {},
+                current_weight_map,
+                max_step=max_step,
+                ignore_band=ignore_band,
+            )
+            target_weights = {sym: float(w) for sym, w in blended.items() if abs(w) > 1e-6}
+            diag["long_term_portfolio"] = {
+                "raw": plan.weights if plan else {},
+                "notes": plan.notes if plan else "",
+                "meta": plan.meta if plan else {},
+                "blended": blended,
+                "max_step": max_step,
+                "ignore_band": ignore_band,
+            }
+
     # Sector caps (optional via CSV)
     sec_map = _sector_map_from_csv()
     sec_vocab, sector_ids, sid = {}, [], 0
@@ -526,81 +598,84 @@ def run_once() -> dict:
         sector_ids.append(sec_vocab[sec])
     rev_sec = {v:k for k,v in sec_vocab.items()}
 
-    # Optimize
-    if len(candidates) > 0 and len(df_ret.columns) > 0:
-        cov_cols = list(df_ret.columns)
-        idx_map = {sym: i for i, sym in enumerate(cov_cols)}
-        cov = df_ret.cov().values
-        sel = [idx_map[s] for s in candidates]
-        Sig_sub = cov[np.ix_(sel, sel)]
-    else:
-        Sig_sub = np.zeros((len(candidates), len(candidates)))
-    if Sig_sub.size:
-        Sig_sub = Sig_sub + np.eye(len(candidates)) * 1e-8
-
-    sector_names = [rev_sec[i] for i in range(len(rev_sec))] if rev_sec else []
-    if sector_names:
-        sector_expo = np.zeros((len(sector_names), len(candidates)))
-        for idx, sec_id in enumerate(sector_ids):
-            sector_expo[sec_id, idx] = 1.0
-    else:
-        sector_expo = None
-
-    etf_set = set(load_top50_etfs())
-    etf_mask = np.array([s in etf_set for s in candidates], dtype=bool)
-
-    prices_array = panel["last_price"].reindex(candidates).fillna(0.0).to_numpy()
-    adv_array = np.array([adv.get(s, 1.0) for s in candidates], dtype=float)
-    spread_val = float(settings_dict.get("COST_SPREAD_BPS", C.COST_SPREAD_BPS))
-    spread_array = np.full(len(candidates), spread_val, dtype=float)
-    kappa_val = float(settings_dict.get("COST_IMPACT_KAPPA", C.COST_IMPACT_KAPPA))
-    kappa_array = np.full(len(candidates), kappa_val, dtype=float)
-    psi_val = float(settings_dict.get("COST_IMPACT_PSI", C.COST_IMPACT_PSI))
-
-    w_scaled = optimize_weights(
-        alpha_series.values,
-        Sig_sub,
-        w_prev,
-        prices_array,
-        adv_array,
-        spread_array,
-        kappa_array,
-        psi_val,
-        candidates,
-        sector_expo=sector_expo,
-        sector_names=sector_names if sector_names else None,
-        etf_mask=etf_mask,
-        equity=equity_base,
-    ) if len(candidates) else np.array([])
-
     fallback_used = False
-    nonzero_sum = float(np.sum(np.abs(w_scaled))) if len(w_scaled) else 0.0
-    if nonzero_sum <= 1e-9 and len(candidates) >= 5 and float(cfg.TARGET_PORTFOLIO_VOL) > 0:
-        k = min(10, len(candidates))
-        w_fb = np.zeros_like(w_scaled)
-        if k > 0:
-            max_weight = float(cfg.NAME_MAX)
-            ew = 1.0 / k
-            for idx in range(k):
-                w_fb[idx] = min(ew, max_weight)
-            target_vol_annual = float(cfg.TARGET_PORTFOLIO_VOL)
-            if target_vol_annual > 0 and Sig_sub.size > 0:
-                target_daily = target_vol_annual / np.sqrt(252.0)
-                cur_vol = float(np.sqrt(w_fb @ Sig_sub @ w_fb)) if Sig_sub.size else 0.0
-                if cur_vol > 1e-8:
-                    w_fb *= min(1.0, target_daily / cur_vol)
-            w_fb = np.clip(w_fb, 0.0, max_weight)
-            total_w = w_fb.sum()
-            if total_w > 1.0:
-                w_fb = w_fb / total_w
-            w_scaled = w_fb
-            fallback_used = True
-    diag_stage = diag.setdefault("stage", {})
-    diag_stage["has_positions"] = bool(has_positions)
-    diag_stage["fallback_used"] = bool(diag_stage.get("fallback_used")) or fallback_used
-    diag_stage["optimizer_nonzero"] = int(np.sum(np.abs(w_scaled) > 1e-6))
+    if not target_weights:
+        if len(candidates) > 0 and len(df_ret.columns) > 0:
+            cov_cols = list(df_ret.columns)
+            idx_map = {sym: i for i, sym in enumerate(cov_cols)}
+            cov = df_ret.cov().values
+            sel = [idx_map[s] for s in candidates]
+            Sig_sub = cov[np.ix_(sel, sel)]
+        else:
+            Sig_sub = np.zeros((len(candidates), len(candidates)))
+        if Sig_sub.size:
+            Sig_sub = Sig_sub + np.eye(len(candidates)) * 1e-8
 
-    target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
+        sector_names = [rev_sec[i] for i in range(len(rev_sec))] if rev_sec else []
+        if sector_names:
+            sector_expo = np.zeros((len(sector_names), len(candidates)))
+            for idx, sec_id in enumerate(sector_ids):
+                sector_expo[sec_id, idx] = 1.0
+        else:
+            sector_expo = None
+
+        etf_set = set(load_top50_etfs())
+        etf_mask = np.array([s in etf_set for s in candidates], dtype=bool)
+
+        prices_array = panel["last_price"].reindex(candidates).fillna(0.0).to_numpy()
+        adv_array = np.array([adv.get(s, 1.0) for s in candidates], dtype=float)
+        spread_val = float(settings_dict.get("COST_SPREAD_BPS", C.COST_SPREAD_BPS))
+        spread_array = np.full(len(candidates), spread_val, dtype=float)
+        kappa_val = float(settings_dict.get("COST_IMPACT_KAPPA", C.COST_IMPACT_KAPPA))
+        kappa_array = np.full(len(candidates), kappa_val, dtype=float)
+        psi_val = float(settings_dict.get("COST_IMPACT_PSI", C.COST_IMPACT_PSI))
+
+        w_scaled = optimize_weights(
+            alpha_series.values,
+            Sig_sub,
+            w_prev,
+            prices_array,
+            adv_array,
+            spread_array,
+            kappa_array,
+            psi_val,
+            candidates,
+            sector_expo=sector_expo,
+            sector_names=sector_names if sector_names else None,
+            etf_mask=etf_mask,
+            equity=equity_base,
+        ) if len(candidates) else np.array([])
+
+        nonzero_sum = float(np.sum(np.abs(w_scaled))) if len(w_scaled) else 0.0
+        if nonzero_sum <= 1e-9 and len(candidates) >= 5 and float(cfg.TARGET_PORTFOLIO_VOL) > 0:
+            k = min(10, len(candidates))
+            w_fb = np.zeros_like(w_scaled)
+            if k > 0:
+                max_weight = float(cfg.NAME_MAX)
+                ew = 1.0 / k
+                for idx in range(k):
+                    w_fb[idx] = min(ew, max_weight)
+                target_vol_annual = float(cfg.TARGET_PORTFOLIO_VOL)
+                if target_vol_annual > 0 and Sig_sub.size > 0:
+                    target_daily = target_vol_annual / np.sqrt(252.0)
+                    cur_vol = float(np.sqrt(w_fb @ Sig_sub @ w_fb)) if Sig_sub.size else 0.0
+                    if cur_vol > 1e-8:
+                        w_fb *= min(1.0, target_daily / cur_vol)
+                w_fb = np.clip(w_fb, 0.0, max_weight)
+                total_w = w_fb.sum()
+                if total_w > 1.0:
+                    w_fb = w_fb / total_w
+                w_scaled = w_fb
+                fallback_used = True
+        target_weights = {s: float(w) for s, w in zip(candidates, w_scaled)}
+        diag_stage["optimizer_nonzero"] = int(np.sum(np.abs(w_scaled) > 1e-6))
+    else:
+        diag_stage["optimizer_nonzero"] = int(
+            sum(1 for w in target_weights.values() if abs(w) > 1e-6)
+        )
+        diag_stage["optimizer_skipped"] = True
+
+    diag_stage["fallback_used"] = bool(diag_stage.get("fallback_used")) or fallback_used
 
     target_slots = int(settings_dict.get("TARGET_POSITIONS", TARGET_POSITIONS))
     target_slots = max(1, min(10, target_slots))
