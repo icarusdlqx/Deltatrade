@@ -115,6 +115,12 @@ SETTINGS_OVERRIDES_PATH = "data/settings_overrides.json"
 OPENAI_MODEL = "gpt-5"
 OPENAI_REASONING_EFFORT = "medium"
 
+# Long-term portfolio mode
+LONG_TERM_INVESTOR_MODE = os.getenv("LONG_TERM_INVESTOR_MODE", "1") == "1"
+LONG_TERM_MAX_STEP = float(os.getenv("LONG_TERM_MAX_STEP", "0.05"))
+LONG_TERM_IGNORE_BAND = float(os.getenv("LONG_TERM_IGNORE_BAND", "0.03"))
+LONG_TERM_WEIGHT_CAP = float(os.getenv("LONG_TERM_WEIGHT_CAP", str(MAX_WEIGHT_PER_NAME)))
+
 # Execution cost heuristic
 COST_BPS_PER_1PCT_TURNOVER = float(os.getenv("COST_BPS_PER_1PCT_TURNOVER", "3.0"))
 
